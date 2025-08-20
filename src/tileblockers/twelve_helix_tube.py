@@ -390,7 +390,7 @@ def rate_per_hour_sim_with_melting(
     kblockparams: dict[str, Any] | None = None,
     safe_growth_temp: float = 46.0,
     start_size: int = 128*12,
-    sim_time = 10*3600
+    max_sim_time = 10*3600
 ) -> float:
     if kblockparams is None:
         kblockparams = {}
@@ -401,7 +401,7 @@ def rate_per_hour_sim_with_melting(
     min_tiles = ex_state.ntiles + 24
 
     states = [new_state(sys, length) for _ in range(n_sims)]
-    sys.evolve(states, size_max=start_size, for_time=sim_time)
+    sys.evolve(states, size_max=start_size, for_time=max_sim_time)
 
     times = np.array([state.time for state in states])
     ntiles = np.array([state.ntiles for state in states])
@@ -410,7 +410,7 @@ def rate_per_hour_sim_with_melting(
     for x in states:
         sys.update_state(x)
     
-    sys.evolve(states, size_max=max_tiles, size_min=min_tiles, for_time=sim_time)
+    sys.evolve(states, size_max=max_tiles, size_min=min_tiles, for_time=max_sim_time)
 
     times_after = np.array([state.time for state in states])
     ntiles_after = np.array([state.ntiles for state in states])
