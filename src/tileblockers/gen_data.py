@@ -6,6 +6,8 @@ Supports command line arguments for parameter ranges and outputs results line-by
 
 import argparse
 import csv
+import json
+from datetime import datetime
 from pathlib import Path
 from tqdm import tqdm
 from tileblockers.twelve_helix_tube import (
@@ -63,7 +65,52 @@ def generate_filename(temps, tile_concs, bconcs):
     return f"phase_diagram_data_{temp_str}_{tile_str}_{bconc_str}.csv"
 
 
-def run_single_simulation(temp, tile_conc, bconc, n_sims=12):
+def create_parameter_info(temps, tile_concs, bconcs, n_sims, var_per_mean2, args):
+    """Create parameter information dictionary for JSON output"""
+    return {
+        "generation_info": {
+            "timestamp": datetime.now().isoformat(),
+            "script_version": "tileblockers-gen-data",
+            "total_simulations": len(temps) * len(tile_concs) * len(bconcs)
+        },
+        "simulation_parameters": {
+            "n_sims_per_point": n_sims,
+            "var_per_mean2": var_per_mean2
+        },
+        "parameter_ranges": {
+            "temperatures": {
+                "values": temps.tolist() if hasattr(temps, 'tolist') else list(temps),
+                "unit": "°C",
+                "count": len(temps),
+                "range": f"{temps[0]:.2f} to {temps[-1]:.2f}" if len(temps) > 1 else f"{temps[0]:.2f}",
+                "original_spec": args.temps
+            },
+            "tile_concentrations": {
+                "values": tile_concs.tolist() if hasattr(tile_concs, 'tolist') else list(tile_concs),
+                "unit": "M",
+                "count": len(tile_concs),
+                "range": f"{tile_concs[0]:.2e} to {tile_concs[-1]:.2e}" if len(tile_concs) > 1 else f"{tile_concs[0]:.2e}",
+                "original_spec": args.tile_concs,
+                "note": "Values are multiplied by 1e-9 from input specification"
+            },
+            "blocker_concentrations": {
+                "values": bconcs.tolist() if hasattr(bconcs, 'tolist') else list(bconcs),
+                "unit": "M",
+                "count": len(bconcs),
+                "range": f"{bconcs[0]:.2e} to {bconcs[-1]:.2e}" if len(bconcs) > 1 else f"{bconcs[0]:.2e}",
+                "original_spec": args.bconcs
+            }
+        },
+        "output_info": {
+            "csv_columns": [
+                "temperature", "tile_conc", "blocker_conc", "blocker_mult", 
+                "growth_rate", "nucleation_rate", "nucleation_rate_05", "nucleation_rate_95"
+            ]
+        }
+    }
+
+
+def run_single_simulation(temp, tile_conc, bconc, n_sims=12, var_per_mean2=0.01):
     """Run both growth and nucleation simulation for a single parameter set"""
     blocker_mult = bconc / tile_conc
     
@@ -77,7 +124,7 @@ def run_single_simulation(temp, tile_conc, bconc, n_sims=12):
     # Nucleation rate simulation
     nucleation_rate_info = run_ffs_for_system(
         temp=temp, cov_mult=blocker_mult, tile_conc=tile_conc,
-        var_per_mean2=0.01, min_nuc_rate=1e-14,
+        var_per_mean2=var_per_mean2, min_nuc_rate=1e-14,
         sys_fun=simple_twelve_helix_system
     )
     
@@ -114,6 +161,8 @@ Parameter format examples:
                        help='Blocker concentration range (default: 2.5e-6)')
     parser.add_argument('--n_sims', type=int, default=12,
                        help='Number of simulations per parameter set (default: 12)')
+    parser.add_argument('--var_per_mean2', type=float, default=0.01,
+                       help='Variance per mean squared for nucleation rate calculations (default: 0.01)')
     parser.add_argument('--output_dir', type=str, default='.',
                        help='Output directory (default: current directory)')
     
@@ -131,9 +180,18 @@ Parameter format examples:
     # Generate output filename and path
     filename = generate_filename(temps, tile_concs, bconcs)
     output_path = Path(args.output_dir) / filename
+    json_path = output_path.with_suffix('.json')
     
-    print(f"Output file: {output_path}")
+    print(f"Output CSV file: {output_path}")
+    print(f"Output JSON file: {json_path}")
     print(f"Total simulations: {len(temps) * len(tile_concs) * len(bconcs)}")
+    
+    # Create and save parameter information JSON
+    param_info = create_parameter_info(temps, tile_concs, bconcs, args.n_sims, args.var_per_mean2, args)
+    with open(json_path, 'w') as json_file:
+        json.dump(param_info, json_file, indent=2, ensure_ascii=False)
+    
+    print(f"Parameter information saved to: {json_path}")
     
     # Prepare CSV file and write header
     fieldnames = ['temperature', 'tile_conc', 'blocker_conc', 'blocker_mult', 'growth_rate', 'nucleation_rate', 'nucleation_rate_05', 'nucleation_rate_95']
@@ -150,7 +208,7 @@ Parameter format examples:
                 for tile_conc in tile_concs:
                     for bconc in bconcs:
                         try:
-                            result = run_single_simulation(temp, tile_conc, bconc, args.n_sims)
+                            result = run_single_simulation(temp, tile_conc, bconc, args.n_sims, args.var_per_mean2)
                             writer.writerow(result)
                             csvfile.flush()  # Ensure data is written immediately
                             

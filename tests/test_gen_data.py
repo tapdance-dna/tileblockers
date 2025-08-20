@@ -11,6 +11,7 @@ from pathlib import Path
 import subprocess
 import sys
 import os
+import json
 
 from tileblockers.gen_data import parse_parameter, run_single_simulation, generate_filename
 
@@ -88,7 +89,7 @@ class TestSimulationLogic:
         tile_conc = 1e-7
         bconc = 0.0  # No blocker
         
-        result = run_single_simulation(temp, tile_conc, bconc, n_sims=1)
+        result = run_single_simulation(temp, tile_conc, bconc, n_sims=1, var_per_mean2=0.01)
         
         # Check that all expected keys are present
         expected_keys = ['temperature', 'tile_conc', 'blocker_conc', 'blocker_mult', 
@@ -110,10 +111,10 @@ class TestSimulationLogic:
         bconc = 0.0  # No blocker for cleaner test
         
         # Test low temperature (should be positive growth rate)
-        result_low = run_single_simulation(40.0, tile_conc, bconc, n_sims=1)
+        result_low = run_single_simulation(40.0, tile_conc, bconc, n_sims=1, var_per_mean2=0.01)
         
         # Test high temperature (should be negative growth rate)  
-        result_high = run_single_simulation(60.0, tile_conc, bconc, n_sims=1)
+        result_high = run_single_simulation(60.0, tile_conc, bconc, n_sims=1, var_per_mean2=0.01)
         
         # At low temperature, growth should be positive (assembly favorable)
         assert result_low['growth_rate'] > 0, f"Expected positive growth at 40°C, got {result_low['growth_rate']}"
@@ -132,18 +133,35 @@ class TestSimulationLogic:
         bconc = 0.0
         
         # Test above 55°C - should be negative
-        result_high = run_single_simulation(56.0, tile_conc, bconc, n_sims=1)
+        result_high = run_single_simulation(56.0, tile_conc, bconc, n_sims=1, var_per_mean2=0.01)
         assert result_high['growth_rate'] < 0, (
             f"Expected negative growth rate at 56°C with tile_conc={tile_conc}, bconc={bconc}, "
             f"got {result_high['growth_rate']}"
         )
         
         # Test below 47°C - should be positive  
-        result_low = run_single_simulation(46.0, tile_conc, bconc, n_sims=1)
+        result_low = run_single_simulation(46.0, tile_conc, bconc, n_sims=1, var_per_mean2=0.01)
         assert result_low['growth_rate'] > 0, (
             f"Expected positive growth rate at 46°C with tile_conc={tile_conc}, bconc={bconc}, "
             f"got {result_low['growth_rate']}"
         )
+    
+    def test_var_per_mean2_parameter(self):
+        """Test that var_per_mean2 parameter is properly passed through."""
+        tile_conc = 1e-7
+        bconc = 0.0
+        temp = 45.0
+        
+        # Test with different var_per_mean2 values
+        result1 = run_single_simulation(temp, tile_conc, bconc, n_sims=1, var_per_mean2=0.01)
+        result2 = run_single_simulation(temp, tile_conc, bconc, n_sims=1, var_per_mean2=0.05)
+        
+        # Both should complete successfully 
+        assert isinstance(result1['nucleation_rate'], (int, float))
+        assert isinstance(result2['nucleation_rate'], (int, float))
+        
+        # The results may be different due to the var_per_mean2 parameter
+        # (though for such a simple test case they might be the same)
 
 
 class TestScriptIntegration:
@@ -167,18 +185,31 @@ class TestScriptIntegration:
             # Check that script completed successfully
             assert result.returncode == 0, f"Script failed with stderr: {result.stderr}"
             
-            # Check that output file was created
-            output_files = list(Path(tmpdir).glob("*.csv"))
-            assert len(output_files) == 1, f"Expected 1 output file, found {len(output_files)}"
+            # Check that output files were created
+            csv_files = list(Path(tmpdir).glob("*.csv"))
+            json_files = list(Path(tmpdir).glob("*.json"))
+            assert len(csv_files) == 1, f"Expected 1 CSV file, found {len(csv_files)}"
+            assert len(json_files) == 1, f"Expected 1 JSON file, found {len(json_files)}"
             
-            # Check that output file has expected structure
-            df = pl.read_csv(output_files[0])
+            # Check that CSV file has expected structure
+            df = pl.read_csv(csv_files[0])
             expected_columns = ['temperature', 'tile_conc', 'blocker_conc', 'blocker_mult', 
                               'growth_rate', 'nucleation_rate', 'nucleation_rate_05', 'nucleation_rate_95']
             for col in expected_columns:
                 assert col in df.columns, f"Missing column: {col}"
             
             assert len(df) == 1, f"Expected 1 row of data, got {len(df)}"
+            
+            # Check that JSON file has expected structure
+            with open(json_files[0]) as f:
+                json_data = json.load(f)
+            
+            expected_json_keys = ["generation_info", "simulation_parameters", "parameter_ranges", "output_info"]
+            for key in expected_json_keys:
+                assert key in json_data, f"Missing JSON key: {key}"
+            
+            assert json_data["simulation_parameters"]["n_sims_per_point"] == 1
+            assert json_data["simulation_parameters"]["var_per_mean2"] == 0.01
     
     def test_script_with_list_parameters(self):
         """Test that the script handles list parameters correctly."""
@@ -207,6 +238,41 @@ class TestScriptIntegration:
             temps = df['temperature'].to_list()
             expected_temp_order = [40.0, 40.0, 50.0, 50.0]  # nested loop order
             assert temps == expected_temp_order
+    
+    def test_script_with_var_per_mean2_parameter(self):
+        """Test that the script accepts and uses the --var_per_mean2 parameter."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cmd = [
+                sys.executable, "-m", "tileblockers.gen_data",
+                "--temps", "45",
+                "--tile_concs", "0.1",
+                "--bconcs", "0",
+                "--n_sims", "1",
+                "--var_per_mean2", "0.05",  # Non-default value
+                "--output_dir", tmpdir
+            ]
+            
+            result = subprocess.run(cmd, capture_output=True, text=True, cwd="/var/home/const/repos/tileblockers")
+            
+            assert result.returncode == 0, f"Script failed with stderr: {result.stderr}"
+            
+            # Check output files were created successfully
+            csv_files = list(Path(tmpdir).glob("*.csv"))
+            json_files = list(Path(tmpdir).glob("*.json"))
+            assert len(csv_files) == 1
+            assert len(json_files) == 1
+            
+            df = pl.read_csv(csv_files[0])
+            assert len(df) == 1
+            
+            # Verify the nucleation rate is present (indicates simulation ran)
+            assert 'nucleation_rate' in df.columns
+            assert not df['nucleation_rate'][0] != df['nucleation_rate'][0]  # Not NaN
+            
+            # Check that JSON contains the correct var_per_mean2 value
+            with open(json_files[0]) as f:
+                json_data = json.load(f)
+            assert json_data["simulation_parameters"]["var_per_mean2"] == 0.05
 
 
 if __name__ == "__main__":
