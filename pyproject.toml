@@ -1,0 +1,19 @@
+[project]
+name = "tileblockers"
+version = "0.1.0"
+description = "Combined support library for tile blockers papers and presentations."
+readme = "README.md"
+authors = [
+    { name = "Constantine Evans", email = "constantine@costi.net" }
+]
+requires-python = ">=3.13"
+dependencies = [
+    "matplotlib>=3.10.5",
+    "numpy>=2.3.2",
+    "polars>=1.32.3",
+    "rgrow>=0.20.0",
+]
+
+[build-system]
+requires = ["uv_build>=0.8.12,<0.9.0"]
+build-backend = "uv_build"
