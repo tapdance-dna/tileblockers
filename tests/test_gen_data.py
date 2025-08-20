@@ -162,6 +162,29 @@ class TestSimulationLogic:
         
         # The results may be different due to the var_per_mean2 parameter
         # (though for such a simple test case they might be the same)
+    
+    def test_additional_simulation_parameters(self):
+        """Test that additional simulation parameters work correctly."""
+        tile_conc = 1e-7
+        bconc = 0.0
+        temp = 45.0
+        
+        # Test with non-default parameters
+        result = run_single_simulation(
+            temp, tile_conc, bconc, n_sims=1, var_per_mean2=0.01,
+            max_sim_time=1800,  # 30 minutes instead of 10 hours
+            start_size=768,     # Half the default
+            length=128,         # Half the default
+            sys_fun_name='simple_twelve_helix_system'
+        )
+        
+        # Basic checks that simulation completed
+        assert isinstance(result['growth_rate'], (int, float))
+        assert isinstance(result['nucleation_rate'], (int, float))
+        assert '_growth_duration' in result
+        assert '_nucleation_duration' in result
+        assert result['_growth_duration'] > 0
+        assert result['_nucleation_duration'] > 0
 
 
 class TestScriptIntegration:
@@ -346,6 +369,40 @@ class TestScriptIntegration:
             # Loop order should be bconcs (first specified), temps (second), tile_concs (third)
             expected_loop_order = ['bconcs', 'temps', 'tile_concs']
             assert json_data["generation_info"]["loop_order"] == expected_loop_order
+    
+    def test_additional_simulation_parameters_cli(self):
+        """Test that additional simulation parameters work via command line."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cmd = [
+                sys.executable, "-m", "tileblockers.gen_data",
+                "--temps", "45",
+                "--tile_concs", "0.1",
+                "--bconcs", "0",
+                "--n_sims", "1",
+                "--max_sim_time", "1800",  # 30 minutes
+                "--start_size", "768",
+                "--length", "128", 
+                "--sys_fun", "simple_twelve_helix_system",
+                "--output_dir", tmpdir
+            ]
+            
+            result = subprocess.run(cmd, capture_output=True, text=True, cwd="/var/home/const/repos/tileblockers")
+            
+            assert result.returncode == 0, f"Script failed with stderr: {result.stderr}"
+            
+            # Check that JSON contains the correct parameter values
+            json_files = list(Path(tmpdir).glob("*.json"))
+            assert len(json_files) == 1
+            
+            with open(json_files[0]) as f:
+                json_data = json.load(f)
+            
+            # Check simulation parameters
+            sim_params = json_data["simulation_parameters"]
+            assert sim_params["max_sim_time"] == 1800
+            assert sim_params["start_size"] == 768
+            assert sim_params["length"] == 128
+            assert sim_params["sys_fun"] == "simple_twelve_helix_system"
 
 
 if __name__ == "__main__":
