@@ -1,0 +1,213 @@
+#!/usr/bin/env python3
+"""
+Tests for the gen_data script.
+Uses minimal parameter values for fast execution.
+"""
+
+import pytest
+import tempfile
+import polars as pl
+from pathlib import Path
+import subprocess
+import sys
+import os
+
+from tileblockers.gen_data import parse_parameter, run_single_simulation, generate_filename
+
+
+class TestParseParameter:
+    """Test the parameter parsing function."""
+    
+    def test_single_value(self):
+        result = parse_parameter("2.5e-6")
+        assert len(result) == 1
+        assert result[0] == pytest.approx(2.5e-6)
+    
+    def test_range(self):
+        result = parse_parameter("30:35:2.5")
+        expected = [30.0, 32.5]
+        assert len(result) == len(expected)
+        for actual, exp in zip(result, expected):
+            assert actual == pytest.approx(exp)
+    
+    def test_logspace(self):
+        result = parse_parameter("log:1:2:3")
+        expected = [10, 31.622776601683795, 100]  # 10^1, 10^1.5, 10^2
+        assert len(result) == 3
+        for actual, exp in zip(result, expected):
+            assert actual == pytest.approx(exp, rel=1e-6)
+    
+    def test_list_values(self):
+        result = parse_parameter("30,45,60")
+        expected = [30.0, 45.0, 60.0]
+        assert len(result) == len(expected)
+        for actual, exp in zip(result, expected):
+            assert actual == pytest.approx(exp)
+    
+    def test_list_values_with_spaces(self):
+        result = parse_parameter("30, 45 , 60")
+        expected = [30.0, 45.0, 60.0]
+        assert len(result) == len(expected)
+        for actual, exp in zip(result, expected):
+            assert actual == pytest.approx(exp)
+    
+    def test_none_input(self):
+        result = parse_parameter(None)
+        assert result is None
+
+
+class TestGenerateFilename:
+    """Test filename generation."""
+    
+    def test_single_values(self):
+        temps = [45.0]
+        tile_concs = [1e-7]
+        bconcs = [2.5e-6]
+        filename = generate_filename(temps, tile_concs, bconcs)
+        assert "T_4.50e+01" in filename
+        assert "tile_1.00e-07" in filename
+        assert "bconc_2.50e-06" in filename
+    
+    def test_ranges(self):
+        temps = [30.0, 45.0, 60.0]
+        tile_concs = [1e-8, 1e-7]
+        bconcs = [1e-6]
+        filename = generate_filename(temps, tile_concs, bconcs)
+        assert "T_3.00e+01_to_6.00e+01_n3" in filename
+        assert "tile_1.00e-08_to_1.00e-07_n2" in filename
+        assert "bconc_1.00e-06" in filename
+
+
+class TestSimulationLogic:
+    """Test the core simulation functions with minimal parameters."""
+    
+    def test_run_single_simulation_fast(self):
+        """Test simulation with minimal parameters for speed."""
+        # Use parameters that should give predictable results
+        temp = 45.0  # Should give positive growth rate
+        tile_conc = 1e-7
+        bconc = 0.0  # No blocker
+        
+        result = run_single_simulation(temp, tile_conc, bconc, n_sims=1)
+        
+        # Check that all expected keys are present
+        expected_keys = ['temperature', 'tile_conc', 'blocker_conc', 'blocker_mult', 
+                        'growth_rate', 'nucleation_rate', 'nucleation_rate_05', 'nucleation_rate_95']
+        for key in expected_keys:
+            assert key in result
+        
+        # Check values are reasonable
+        assert result['temperature'] == temp
+        assert result['tile_conc'] == tile_conc
+        assert result['blocker_conc'] == bconc
+        assert result['blocker_mult'] == 0.0
+        assert isinstance(result['growth_rate'], (int, float))
+        assert isinstance(result['nucleation_rate'], (int, float))
+    
+    def test_growth_rate_temperature_dependence(self):
+        """Test that growth rate behaves as expected with temperature."""
+        tile_conc = 1e-7
+        bconc = 0.0  # No blocker for cleaner test
+        
+        # Test low temperature (should be positive growth rate)
+        result_low = run_single_simulation(40.0, tile_conc, bconc, n_sims=1)
+        
+        # Test high temperature (should be negative growth rate)  
+        result_high = run_single_simulation(60.0, tile_conc, bconc, n_sims=1)
+        
+        # At low temperature, growth should be positive (assembly favorable)
+        assert result_low['growth_rate'] > 0, f"Expected positive growth at 40°C, got {result_low['growth_rate']}"
+        
+        # At high temperature, growth should be negative (disassembly favorable)
+        assert result_high['growth_rate'] < 0, f"Expected negative growth at 60°C, got {result_high['growth_rate']}"
+    
+    def test_specific_growth_rate_conditions(self):
+        """
+        Test specific growth rate behavior as requested:
+        - For tile concentration 1e-7 and blocker concentration 0:
+        - Growth rate should be negative when temperature is above 55°C
+        - Growth rate should be positive when temperature is below 47°C
+        """
+        tile_conc = 1e-7
+        bconc = 0.0
+        
+        # Test above 55°C - should be negative
+        result_high = run_single_simulation(56.0, tile_conc, bconc, n_sims=1)
+        assert result_high['growth_rate'] < 0, (
+            f"Expected negative growth rate at 56°C with tile_conc={tile_conc}, bconc={bconc}, "
+            f"got {result_high['growth_rate']}"
+        )
+        
+        # Test below 47°C - should be positive  
+        result_low = run_single_simulation(46.0, tile_conc, bconc, n_sims=1)
+        assert result_low['growth_rate'] > 0, (
+            f"Expected positive growth rate at 46°C with tile_conc={tile_conc}, bconc={bconc}, "
+            f"got {result_low['growth_rate']}"
+        )
+
+
+class TestScriptIntegration:
+    """Test the complete script execution."""
+    
+    def test_script_runs_successfully(self):
+        """Test that the script runs without errors with minimal parameters."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Run script with very minimal parameters for speed
+            cmd = [
+                sys.executable, "-m", "tileblockers.gen_data",
+                "--temps", "45",  # Single temperature
+                "--tile_concs", "1e-1",  # Single concentration (will be *1e-9 = 1e-10)
+                "--bconcs", "0",  # No blocker
+                "--n_sims", "1",  # Minimal simulations
+                "--output_dir", tmpdir
+            ]
+            
+            result = subprocess.run(cmd, capture_output=True, text=True, cwd="/var/home/const/repos/tileblockers")
+            
+            # Check that script completed successfully
+            assert result.returncode == 0, f"Script failed with stderr: {result.stderr}"
+            
+            # Check that output file was created
+            output_files = list(Path(tmpdir).glob("*.csv"))
+            assert len(output_files) == 1, f"Expected 1 output file, found {len(output_files)}"
+            
+            # Check that output file has expected structure
+            df = pl.read_csv(output_files[0])
+            expected_columns = ['temperature', 'tile_conc', 'blocker_conc', 'blocker_mult', 
+                              'growth_rate', 'nucleation_rate', 'nucleation_rate_05', 'nucleation_rate_95']
+            for col in expected_columns:
+                assert col in df.columns, f"Missing column: {col}"
+            
+            assert len(df) == 1, f"Expected 1 row of data, got {len(df)}"
+    
+    def test_script_with_list_parameters(self):
+        """Test that the script handles list parameters correctly."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cmd = [
+                sys.executable, "-m", "tileblockers.gen_data",
+                "--temps", "40,50",  # Two temperatures
+                "--tile_concs", "0.1,1",  # Two concentrations  
+                "--bconcs", "0",  # No blocker
+                "--n_sims", "1",
+                "--output_dir", tmpdir
+            ]
+            
+            result = subprocess.run(cmd, capture_output=True, text=True, cwd="/var/home/const/repos/tileblockers")
+            
+            assert result.returncode == 0, f"Script failed with stderr: {result.stderr}"
+            
+            # Check output file
+            output_files = list(Path(tmpdir).glob("*.csv"))
+            assert len(output_files) == 1
+            
+            df = pl.read_csv(output_files[0])
+            assert len(df) == 4, f"Expected 4 rows (2 temps × 2 tile_concs), got {len(df)}"
+            
+            # Check that temperatures are in the expected order
+            temps = df['temperature'].to_list()
+            expected_temp_order = [40.0, 40.0, 50.0, 50.0]  # nested loop order
+            assert temps == expected_temp_order
+
+
+if __name__ == "__main__":
+    pytest.main([__file__])

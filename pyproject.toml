@@ -19,8 +19,12 @@ dependencies = [
 requires = ["uv_build>=0.8.12,<0.9.0"]
 build-backend = "uv_build"
 
+[project.scripts]
+tileblockers-gen-data = "tileblockers.gen_data:main"
+
 [dependency-groups]
 dev = [
     "ipykernel>=6.30.1",
     "ipython>=9.4.0",
+    "pytest>=8.0.0",
 ]

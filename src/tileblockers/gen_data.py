@@ -23,6 +23,7 @@ def parse_parameter(param_str):
     - A single value: "2.5e-6"
     - A range: "30:55:0.5" (start:stop:step)
     - A logspace range: "log:1:3:20" (log:start:stop:num_points)
+    - A list of values: "1.0,2.5,5.0" (comma-separated, processed in order)
     """
     if param_str is None:
         return None
@@ -33,6 +34,10 @@ def parse_parameter(param_str):
             raise ValueError(f"Logspace format should be 'log:start:stop:num_points', got {param_str}")
         _, start, stop, num = parts
         return np.logspace(float(start), float(stop), int(num))
+    elif "," in param_str:
+        # Parse comma-separated list of values
+        values = [float(val.strip()) for val in param_str.split(",")]
+        return np.array(values)
     elif ":" in param_str:
         parts = param_str.split(":")
         if len(parts) != 3:
@@ -97,6 +102,7 @@ Parameter format examples:
   Single value: --temps 45.0
   Linear range: --temps 30:55:0.5 (start:stop:step)
   Log range: --tile_concs log:1:3:20 (log:start_exp:stop_exp:num_points)
+  List of values: --temps 30,45,60 (comma-separated, processed in order)
         """
     )
     
@@ -115,7 +121,7 @@ Parameter format examples:
     
     # Parse parameter ranges
     temps = parse_parameter(args.temps)
-    tile_concs = parse_parameter(args.tile_concs) * 1e-9  # Convert to M
+    tile_concs = np.array(parse_parameter(args.tile_concs)) * 1e-9  # Convert to M
     bconcs = parse_parameter(args.bconcs)
     
     print(f"Temperature range: {len(temps)} values from {temps[0]:.1f} to {temps[-1]:.1f}")
