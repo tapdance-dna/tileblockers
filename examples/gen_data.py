@@ -6,7 +6,7 @@ from tqdm.contrib.concurrent import thread_map
 
 
 bconc = 2.5e-6
-temps = np.arange(30, 55, 1)
+temps = np.arange(30, 55, 0.5)
 tile_concs = np.logspace(1, 3, 20) * 1e-9
 
 rows = []
