@@ -173,7 +173,7 @@ def run_single_simulation(temp, tile_conc, bconc, n_sims=12, var_per_mean2=0.01,
         sys_fun=sys_fun, 
         tile_conc=tile_conc, tile_remaining=1.0,
         start_size=start_size,
-        sim_time=max_sim_time
+        max_sim_time=max_sim_time
     ) / 3600.0 / 3.5
     growth_duration = time.time() - growth_start_time
     
