@@ -111,27 +111,90 @@ def draw_phase_diagram(
     else:
         vals = df
 
+    # Filter out rows with null values in key columns to avoid pivot/contour failures
+    # This is essential when working with in-progress data where some parameter combinations
+    # may be missing or incomplete
+    
+    # Always require x_val, y_val, and growth_rate to be non-null
+    required_columns = [x_val, y_val, "growth_rate"]
+    vals = vals.filter(pl.all_horizontal(pl.col(col).is_not_null() for col in required_columns))
+    
+    # Check if we have any data left after filtering
+    if len(vals) == 0:
+        raise ValueError("No valid data remaining after filtering out null values")
+    
+    # Check if we have enough unique values for each axis to create a meaningful contour plot
+    unique_x = vals.select(pl.col(x_val).n_unique()).item()
+    unique_y = vals.select(pl.col(y_val).n_unique()).item()
+    
+    if unique_x < 2 or unique_y < 2:
+        raise ValueError(f"Need at least 2 unique values for each axis. Found {unique_x} unique {x_val} and {unique_y} unique {y_val}")
+    
+    # For optional features, filter nulls only if we're using them
+    if include_nucleation:
+        vals_nuc = vals.filter(pl.col("nucleation_rate").is_not_null())
+        # Only update vals if we still have enough data for nucleation
+        if len(vals_nuc) >= 4:  # Need minimum for 2x2 grid
+            unique_x_nuc = vals_nuc.select(pl.col(x_val).n_unique()).item()  
+            unique_y_nuc = vals_nuc.select(pl.col(y_val).n_unique()).item()
+            if unique_x_nuc >= 2 and unique_y_nuc >= 2:
+                nucleation_vals = vals_nuc
+            else:
+                include_nucleation = False  # Disable nucleation if insufficient data
+                nucleation_vals = vals
+        else:
+            include_nucleation = False
+            nucleation_vals = vals
+    else:
+        nucleation_vals = vals
+    
+    if include_growth1_rates:
+        vals_gr1 = vals.filter(pl.col("growth_rate_1bond").is_not_null())
+        # Only update vals if we still have enough data for 1-bond growth
+        if len(vals_gr1) >= 4:  # Need minimum for 2x2 grid
+            unique_x_gr1 = vals_gr1.select(pl.col(x_val).n_unique()).item()
+            unique_y_gr1 = vals_gr1.select(pl.col(y_val).n_unique()).item()
+            if unique_x_gr1 >= 2 and unique_y_gr1 >= 2:
+                growth1_vals = vals_gr1
+            else:
+                include_growth1_rates = False  # Disable 1-bond growth if insufficient data
+                growth1_vals = vals
+        else:
+            include_growth1_rates = False
+            growth1_vals = vals
+    else:
+        growth1_vals = vals
+
     if ax is None:
         fig, ax = plt.subplots()
     else:
         fig = ax.get_figure()
 
-    xg = (
-        vals.pivot(index=x_val, on=y_val, values=x_val, aggregate_function=agg)
-        .select(pl.exclude(x_val))
-        .to_numpy()
-    )
-    yg = (
-        vals.pivot(index=x_val, on=y_val, values=y_val, aggregate_function=agg)
-        .select(pl.exclude(x_val))
-        .to_numpy()
-    )
+    # Create pivot tables for coordinate grids - handle potential NaN/missing values
+    try:
+        xg = (
+            vals.pivot(index=x_val, on=y_val, values=x_val, aggregate_function=agg)
+            .select(pl.exclude(x_val))
+            .to_numpy()
+        )
+        yg = (
+            vals.pivot(index=x_val, on=y_val, values=y_val, aggregate_function=agg)
+            .select(pl.exclude(x_val))
+            .to_numpy()
+        )
 
-    gv = (
-        vals.pivot(index=x_val, on=y_val, values="growth_rate", aggregate_function=agg)
-        .select(pl.exclude(x_val))
-        .to_numpy()
-    )
+        gv = (
+            vals.pivot(index=x_val, on=y_val, values="growth_rate", aggregate_function=agg)
+            .select(pl.exclude(x_val))
+            .to_numpy()
+        )
+        
+        # Check for NaN values in the pivoted grids which indicate incomplete coverage
+        if np.isnan(xg).any() or np.isnan(yg).any() or np.isnan(gv).any():
+            raise ValueError("Incomplete data grid after null filtering - some parameter combinations are missing")
+            
+    except Exception as e:
+        raise ValueError(f"Failed to create pivot tables for plotting. This may be due to incomplete data grid after null filtering: {e}")
 
 
     growthrates_h = gv * 3600
@@ -195,10 +258,25 @@ def draw_phase_diagram(
     if include_nucleation:
 
         spont_nuc = (
-            vals.pivot(index=x_val, on=y_val, values="nucleation_rate", aggregate_function=agg)
+            nucleation_vals.pivot(index=x_val, on=y_val, values="nucleation_rate", aggregate_function=agg)
             .select(pl.exclude(x_val))
             .to_numpy()
         )
+        
+        # Also need to recalculate x/y grids for nucleation data if different from main data
+        if len(nucleation_vals) != len(vals):
+            xg_nuc = (
+                nucleation_vals.pivot(index=x_val, on=y_val, values=x_val, aggregate_function=agg)
+                .select(pl.exclude(x_val))
+                .to_numpy()
+            )
+            yg_nuc = (
+                nucleation_vals.pivot(index=x_val, on=y_val, values=y_val, aggregate_function=agg)
+                .select(pl.exclude(x_val))
+                .to_numpy()
+            )
+        else:
+            xg_nuc, yg_nuc = xg, yg
 
         avail_nuc_colors = [
             "#ede7f680",  # lightest, most transparent
@@ -218,14 +296,14 @@ def draw_phase_diagram(
             spont_nuc_contour_colors.append(next(avail_nuc_iter))
         match nuc_type:
             case "contour":
-                ax.contourf(xg, yg, spont_nuc, colors=spont_nuc_contour_colors, levels=spont_nuc_contour_levels)
+                ax.contourf(xg_nuc, yg_nuc, spont_nuc, colors=spont_nuc_contour_colors, levels=spont_nuc_contour_levels)
             case "heatmap":
                 from matplotlib.colors import LinearSegmentedColormap
 
                 colors = ["#f5d6a7", "#ff9800"]
                 cmap = LinearSegmentedColormap.from_list("custom_contour", colors, N=256)
                 masked = np.ma.masked_where(spont_nuc <= 1e-6, spont_nuc)
-                ax.pcolormesh(xg, yg, masked, cmap=cmap, vmin=1e-6, vmax=1e-4)
+                ax.pcolormesh(xg_nuc, yg_nuc, masked, cmap=cmap, vmin=1e-6, vmax=1e-4)
 
         # ax.contour(xg, yg, spont_nuc, levels=[1e-6], colors="black", linewidths=1)
 
@@ -236,10 +314,25 @@ def draw_phase_diagram(
         if isinstance(include_growth1_rates, bool):
             include_growth1_rates = [0, 10, 50, 100, 500, np.inf]
         gv1 = (
-            vals.pivot(index=x_val, on=y_val, values="growth_rate_1bond", aggregate_function=agg)
+            growth1_vals.pivot(index=x_val, on=y_val, values="growth_rate_1bond", aggregate_function=agg)
             .select(pl.exclude(x_val))
             .to_numpy()
         ) * 3600
+        
+        # Also need to recalculate x/y grids for 1-bond growth data if different from main data
+        if len(growth1_vals) != len(vals):
+            xg_gr1 = (
+                growth1_vals.pivot(index=x_val, on=y_val, values=x_val, aggregate_function=agg)
+                .select(pl.exclude(x_val))
+                .to_numpy()
+            )
+            yg_gr1 = (
+                growth1_vals.pivot(index=x_val, on=y_val, values=y_val, aggregate_function=agg)
+                .select(pl.exclude(x_val))
+                .to_numpy()
+            )
+        else:
+            xg_gr1, yg_gr1 = xg, yg
         growth1_contour_levels = []
         growth1_contour_colors = []
         if isinstance(include_growth1_rates, bool):
@@ -248,7 +341,7 @@ def draw_phase_diagram(
         for rate in include_growth1_rates:
             growth1_contour_levels.append(rate)
             growth1_contour_colors.append(next(avail1_iter))
-        ax.contourf(xg, yg, gv1, colors=growth1_contour_colors, levels=growth1_contour_levels)
+        ax.contourf(xg_gr1, yg_gr1, gv1, colors=growth1_contour_colors, levels=growth1_contour_levels)
         # ax.contour(xg, yg, gv1, levels=growth1_contour_levels, colors="black", linewidths=1)
 
     labeldict = {
