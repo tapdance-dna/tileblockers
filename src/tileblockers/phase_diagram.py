@@ -16,6 +16,17 @@ from .theoretical_calculations import (
     nuc_rate_rect,
 )
 
+def draw_arrows(ax, coords, **arrowprops):
+    for (start, end) in zip(coords, coords[1:]):
+        ax.annotate(
+            "",
+            xy=end,
+            xytext=start,
+            arrowprops=dict(arrowstyle="->", color="black", lw=2, shrinkA=0, shrinkB=0) | arrowprops,
+        )
+    ax.plot(*coords[0], "o", color="black", markersize=6)
+
+
 def theory_calcs(df, adj_bdg37: float = 0.0, adj_bds: float = 0.0):
     return df.with_columns(
         pl.struct("temperature", "tile_conc", "blocker_conc")
@@ -81,7 +92,7 @@ def value_df(temps, tile_concs, blocker_concs=None, blocker_mults=None):
             )
     return df
 
-def phase_diagram(
+def draw_phase_diagram(
     df,
     x_val,
     y_val,
