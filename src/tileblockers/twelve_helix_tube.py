@@ -4,7 +4,7 @@ import numpy as np
 from rgrow.kblock import KBlockTile, KBlockParams
 import polars as pl
 from rgrow import KBlock
-from frozendict import frozendict
+
 from .theoretical_calculations import growth_rate
 
 
@@ -80,8 +80,10 @@ def simple_twelve_helix_system(
     tile_conc: float = TILE_CONC,
     tile_remaining: float = 1.0,
     diag: bool = False,
-    kblockparams: dict[str, Any] = frozendict()
+    kblockparams: dict[str, Any] | None = None
 ) -> rg.System:
+    if kblockparams is None:
+        kblockparams = {}
     tiles = [
         KBlockTile(
             f"tile_{i}",
@@ -139,8 +141,10 @@ def rate_per_hour_sim_tosize(
     tile_remaining: float = 1.0,
     time_to_run: float = 36000,
     to_size: int = 100*12,
-    kblockparams: dict[str, Any] = frozendict()
+    kblockparams: dict[str, Any] | None = None
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    if kblockparams is None:
+        kblockparams = {}
     sys = sys_fun(temp, cov_mult, tile_conc, tile_remaining, kblockparams=kblockparams)
 
     states = [new_state(sys, 256) for _ in range(n_sims)]
@@ -154,9 +158,11 @@ def pctile_nr(fr, p):
     d = fr.surfaces_dataframe()
     return fr.dimerization_rate * np.prod(stats.binom.ppf(p, d['n_trials'], d['p_r'])/d['n_trials'].to_numpy())
 
-def run_ffs_for_system(temp, cov_mult, sys_fun = simple_twelve_helix_system, kblockparams: dict[str, Any] = frozendict(), 
+def run_ffs_for_system(temp, cov_mult, sys_fun = simple_twelve_helix_system, kblockparams: dict[str, Any] | None = None, 
                        tile_conc: float = TILE_CONC, tile_remaining: float = 1.0, min_nuc_rate: float = 1e-24, 
                        var_per_mean2: float = 1e-2, **ffs_kwargs):
+    if kblockparams is None:
+        kblockparams = {}
     sys = sys_fun(temp, cov_mult, tile_conc, tile_remaining, kblockparams=kblockparams)
     result = sys.run_ffs(min_nuc_rate=min_nuc_rate, var_per_mean2=var_per_mean2, **ffs_kwargs)
     # Calculate percentiles once to avoid redundant calculations
@@ -172,8 +178,10 @@ def twelve_helix_system(
     tile_conc: float = TILE_CONC,
     tile_remaining: float = 1.0,
     diag: bool = False,
-    kblockparams: dict[str, Any] = frozendict()
+    kblockparams: dict[str, Any] | None = None
 ) -> rg.System:
+    if kblockparams is None:
+        kblockparams = {}
     tiles = [
         KBlockTile(
             f"tile_{i}",
@@ -225,8 +233,10 @@ def k9_system(
     cov_mult: float,
     tile_conc: float = TILE_CONC,
     tile_remaining: float = 1.0,
-    kblockparams: dict[str, Any] = frozendict()
+    kblockparams: dict[str, Any] | None = None
 ) -> rg.KBlock:
+    if kblockparams is None:
+        kblockparams = {}
     T9_ALL_SEQS = pl.read_csv("experimental-data/sequences-9-no-nonrep.csv")
 
     tsd = T9_ALL_SEQS.with_columns(pl.col("Sequence").str.split(" ").alias("Sequence")).with_columns(
@@ -275,8 +285,10 @@ def k10_system(
     cov_mult: float,
     tile_conc: float = TILE_CONC,
     tile_remaining: float = 1.0,
-    kblockparams: dict[str, Any] = frozendict()
+    kblockparams: dict[str, Any] | None = None
 ) -> rg.KBlock:
+    if kblockparams is None:
+        kblockparams = {}
     T9_ALL_SEQS = pl.read_csv("experimental-data/seqs-10.csv")
 
     tsd = T9_ALL_SEQS.with_columns(pl.col("Sequence").str.split(" ").alias("Sequence")).with_columns(
@@ -348,8 +360,10 @@ def rate_per_hour_sim(
     tile_remaining: float = 1.0,
     sys_fun = twelve_helix_system,
     time_to_run: float = 3600,
-    kblockparams: dict[str, Any] = frozendict()
+    kblockparams: dict[str, Any] | None = None
 ) -> float:
+    if kblockparams is None:
+        kblockparams = {}
     sys = sys_fun(temp, cov_mult, tile_conc, tile_remaining, **kblockparams)
 
     length = init_length
@@ -365,6 +379,48 @@ def rate_per_hour_sim(
     return ((ntiles - len(sys.seed)).mean() / time_to_run) * 3600
 
 
+def rate_per_hour_sim_with_melting(
+    temp,
+    cov_mult,
+    n_sims: int = 100,
+    length: int = 256,
+    tile_conc: float = TILE_CONC,
+    tile_remaining: float = 1.0,
+    sys_fun = twelve_helix_system,
+    kblockparams: dict[str, Any] | None = None,
+    safe_growth_temp: float = 46.0,
+    start_size: int = 128*12,
+    timeout = 10*3600
+) -> float:
+    if kblockparams is None:
+        kblockparams = {}
+    sys = sys_fun(safe_growth_temp, 0.0, 1e-7, 1.0, **kblockparams)
+
+    max_tiles = 12 * (length - 24)  # to be safe
+    ex_state = new_state(sys, length)
+    min_tiles = ex_state.ntiles + 24
+
+    states = [new_state(sys, length) for _ in range(n_sims)]
+    sys.evolve(states, size_max=start_size, for_time=timeout)
+
+    times = np.array([state.time for state in states])
+    ntiles = np.array([state.ntiles for state in states])
+
+    sys = sys_fun(temp, cov_mult, tile_conc, tile_remaining, **kblockparams)
+    for x in states:
+        sys.update_state(x)
+    
+    sys.evolve(states, size_max=max_tiles, size_min=min_tiles, for_time=timeout)
+
+    times_after = np.array([state.time for state in states])
+    ntiles_after = np.array([state.ntiles for state in states])
+
+
+    return ((ntiles_after - ntiles) / (times_after - times)).mean() * 3600
+
+
+
+
 def dataline(
     temp: float,
     cov_mult: float,
@@ -376,8 +432,8 @@ def dataline(
     sys_fun = k10_system,
     time_to_run: float = 3600,
     output_file: str = None,
-    ffs_kwargs: dict[str, Any] = frozendict(),
-    kblockparams: dict[str, Any] = frozendict()
+    ffs_kwargs: dict[str, Any] | None = None,
+    kblockparams: dict[str, Any] | None = None
 ) -> dict:
     """
     Run simulation with specified parameters and return results as a dictionary that can be serialized to NDJSON.
@@ -387,6 +443,10 @@ def dataline(
     import socket
     import orjson
 
+    if ffs_kwargs is None:
+        ffs_kwargs = {}
+    if kblockparams is None:
+        kblockparams = {}
     default_ffs_kwargs = dict(
         canvas_size=(12, 64),
         canvas_type="tube",

@@ -1,2 +1,3 @@
 .venv
 *.pyc
+examples/phase_diagram_data_sims_growth.csv

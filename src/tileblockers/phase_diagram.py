@@ -22,9 +22,9 @@ def draw_arrows(ax, coords, **arrowprops):
             "",
             xy=end,
             xytext=start,
-            arrowprops=dict(arrowstyle="->", color="black", lw=2, shrinkA=0, shrinkB=0) | arrowprops,
+            arrowprops=dict(arrowstyle="->", color="black", lw=1, shrinkA=0, shrinkB=0) | arrowprops,
         )
-    ax.plot(*coords[0], "o", color="black", markersize=6)
+    ax.plot(*coords[0], "o", color="black", markersize=3)
 
 
 def theory_calcs(df, adj_bdg37: float = 0.0, adj_bds: float = 0.0):
@@ -104,6 +104,7 @@ def draw_phase_diagram(
     include_growth_rates: bool | list[float] = True,
     include_growth1_rates: bool | list[float] = True,
     include_nucleation: bool | list[float] = True,
+    agg="mean"
 ):
     if filt is not None:
         vals = df.filter(filt)
@@ -116,18 +117,18 @@ def draw_phase_diagram(
         fig = ax.get_figure()
 
     xg = (
-        vals.pivot(index=x_val, on=y_val, values=x_val)
+        vals.pivot(index=x_val, on=y_val, values=x_val, aggregate_function=agg)
         .select(pl.exclude(x_val))
         .to_numpy()
     )
     yg = (
-        vals.pivot(index=x_val, on=y_val, values=y_val)
+        vals.pivot(index=x_val, on=y_val, values=y_val, aggregate_function=agg)
         .select(pl.exclude(x_val))
         .to_numpy()
     )
 
     gv = (
-        vals.pivot(index=x_val, on=y_val, values="growth_rate")
+        vals.pivot(index=x_val, on=y_val, values="growth_rate", aggregate_function=agg)
         .select(pl.exclude(x_val))
         .to_numpy()
     )
@@ -190,23 +191,24 @@ def draw_phase_diagram(
             ax.contourf(xg, yg, growthrates_h, colors=["#99a099"], levels=[-1e-30, 1])
     # ax.contour(xg, yg, growthrates_h, levels=[-1, 1], colors="black", linewidths=1)
 
-    spont_nuc = (
-        vals.pivot(index=x_val, on=y_val, values="nucleation_rate")
-        .select(pl.exclude(x_val))
-        .to_numpy()
-    )
-
-    avail_nuc_colors = [
-        "#ede7f680",  # lightest, most transparent
-        "#b39ddbcc",
-        "#7e57c2e6",
-        "#5e35b1f0",
-        "#4527a0fa",
-        "#311b92ff"  # most saturated, fully opaque
-    ]
-    avail_nuc_iter = iter(avail_nuc_colors)
 
     if include_nucleation:
+
+        spont_nuc = (
+            vals.pivot(index=x_val, on=y_val, values="nucleation_rate", aggregate_function=agg)
+            .select(pl.exclude(x_val))
+            .to_numpy()
+        )
+
+        avail_nuc_colors = [
+            "#ede7f680",  # lightest, most transparent
+            "#b39ddbcc",
+            "#7e57c2e6",
+            "#5e35b1f0",
+            "#4527a0fa",
+            "#311b92ff"  # most saturated, fully opaque
+        ]
+        avail_nuc_iter = iter(avail_nuc_colors)
         spont_nuc_contour_levels = []
         spont_nuc_contour_colors = []
         if isinstance(include_nucleation, bool):
@@ -227,14 +229,14 @@ def draw_phase_diagram(
 
         # ax.contour(xg, yg, spont_nuc, levels=[1e-6], colors="black", linewidths=1)
 
-    avail1_colors = ["#ffe0b2", "#ffe082", "#ffd54f", "#ffca28", "#ffc107", "#ffb300"]
-    avail1_iter = iter(avail1_colors)
 
     if include_growth1_rates:
+        avail1_colors = ["#ffe0b2", "#ffe082", "#ffd54f", "#ffca28", "#ffc107", "#ffb300"]
+        avail1_iter = iter(avail1_colors)
         if isinstance(include_growth1_rates, bool):
             include_growth1_rates = [0, 10, 50, 100, 500, np.inf]
         gv1 = (
-            vals.pivot(index=x_val, on=y_val, values="growth_rate_1bond")
+            vals.pivot(index=x_val, on=y_val, values="growth_rate_1bond", aggregate_function=agg)
             .select(pl.exclude(x_val))
             .to_numpy()
         ) * 3600
@@ -253,14 +255,22 @@ def draw_phase_diagram(
         "temperature": "Temperature (°C)",
         "tile_conc": "Tile concentration (nM)",
         "blocker_conc": "Blocker concentration (nM)",
-        "blocker_mult": "Blockers at $y \\times$ tile conc.",
+        "blocker_mult": "Blocker conc ÷ tile conc",
+
     }
 
     ax.set_xlabel(labeldict[x_val])
     ax.set_ylabel(labeldict[y_val])
 
     if y_val in ("tile_conc", "blocker_conc"):
+        ax.set_yscale("log")
         ax.yaxis.set_major_formatter(FuncFormatter(lambda y, _: f"{y*1e9:.0f}"))
+        print("Set y axis to nM")
+    if x_val in ("tile_conc", "blocker_conc"):
+        ax.set_xscale("log")
+        ax.xaxis.set_major_formatter(FuncFormatter(lambda y, _: f"{y*1e9:.0f}"))
+        print("Set x axis to nM")
+
     for label in ax.get_yticklabels():
         label.set_rotation(90)
         # label.set_ha("center")

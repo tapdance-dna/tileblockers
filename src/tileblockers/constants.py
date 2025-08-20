@@ -1,5 +1,5 @@
 R_CONST = 1.98887204e-3  # kcal/mol/K
-TILE_CONC = 50e-9
+TILE_CONC = 100e-9
 
 DS_LAT = -14.12 / 1000 # kcal/mol/K
 SINGLE_SEQ = "TGTCTTGTCA"
