@@ -273,6 +273,79 @@ class TestScriptIntegration:
             with open(json_files[0]) as f:
                 json_data = json.load(f)
             assert json_data["simulation_parameters"]["var_per_mean2"] == 0.05
+    
+    def test_parameter_loop_ordering(self):
+        """Test that parameter loop ordering works correctly based on command-line specification order."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Specify parameters in non-default order: bconcs, temps, tile_concs
+            cmd = [
+                sys.executable, "-m", "tileblockers.gen_data",
+                "--bconcs", "0,1e-6",  # Two blocker concentrations (outer loop)
+                "--temps", "40,50",    # Two temperatures (middle loop) 
+                "--tile_concs", "0.1,1",  # Two tile concentrations (inner loop)
+                "--n_sims", "1",
+                "--output_dir", tmpdir
+            ]
+            
+            result = subprocess.run(cmd, capture_output=True, text=True, cwd="/var/home/const/repos/tileblockers")
+            
+            assert result.returncode == 0, f"Script failed with stderr: {result.stderr}"
+            
+            # Check output files
+            csv_files = list(Path(tmpdir).glob("*.csv"))
+            json_files = list(Path(tmpdir).glob("*.json"))
+            assert len(csv_files) == 1
+            assert len(json_files) == 1
+            
+            df = pl.read_csv(csv_files[0])
+            assert len(df) == 8, f"Expected 8 rows (2 bconcs × 2 temps × 2 tile_concs), got {len(df)}"
+            
+            # Check that the loop order is preserved: bconcs (outer) -> temps -> tile_concs (inner)
+            # First 4 rows should have bconc=0, next 4 should have bconc=1e-6
+            bconcs = df['blocker_conc'].to_list()
+            expected_bconc_pattern = [0.0] * 4 + [1e-6] * 4
+            assert bconcs == expected_bconc_pattern, f"Expected {expected_bconc_pattern}, got {bconcs}"
+            
+            # Within each bconc group, temps should be the next loop level
+            # First 2 rows: bconc=0, temp=40; next 2: bconc=0, temp=50; etc.
+            temps = df['temperature'].to_list()
+            expected_temp_pattern = [40.0, 40.0, 50.0, 50.0, 40.0, 40.0, 50.0, 50.0]
+            assert temps == expected_temp_pattern, f"Expected {expected_temp_pattern}, got {temps}"
+            
+            # Check JSON has the correct loop order
+            with open(json_files[0]) as f:
+                json_data = json.load(f)
+            
+            expected_loop_order = ['bconcs', 'temps', 'tile_concs']
+            assert json_data["generation_info"]["loop_order"] == expected_loop_order
+    
+    def test_default_parameter_flags_without_values(self):
+        """Test using parameter flags without values to control ordering while using defaults."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Use --bconcs first (no value = use default), then --temps (with value)
+            cmd = [
+                sys.executable, "-m", "tileblockers.gen_data",
+                "--bconcs",            # No value, uses default 2.5e-6
+                "--temps", "40,45",    # Specified value
+                "--tile_concs", "0.1", # Single value for speed
+                "--n_sims", "1",
+                "--output_dir", tmpdir
+            ]
+            
+            result = subprocess.run(cmd, capture_output=True, text=True, cwd="/var/home/const/repos/tileblockers")
+            
+            assert result.returncode == 0, f"Script failed with stderr: {result.stderr}"
+            
+            # Check that JSON shows the correct loop order
+            json_files = list(Path(tmpdir).glob("*.json"))
+            assert len(json_files) == 1
+            
+            with open(json_files[0]) as f:
+                json_data = json.load(f)
+            
+            # Loop order should be bconcs (first specified), temps (second), tile_concs (third)
+            expected_loop_order = ['bconcs', 'temps', 'tile_concs']
+            assert json_data["generation_info"]["loop_order"] == expected_loop_order
 
 
 if __name__ == "__main__":
