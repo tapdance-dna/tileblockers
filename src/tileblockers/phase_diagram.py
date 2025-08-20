@@ -3,10 +3,9 @@ import sys
 from typing import Literal
 import matplotlib.pyplot as plt
 import numpy as np
+from matplotlib.ticker import FuncFormatter
 
-sys.path.append("figures-generation/fig1")
-
-from blockers_sim_paper_support.theoretical_calculations import (
+from .theoretical_calculations import (
     pa_full,
     pa_full_bconc,
     pa_approx,
@@ -130,25 +129,29 @@ def phase_diagram(
 
     if include_melting:
         growth_contour_levels.append(-np.inf)
-        growth_contour_levels.append(-1)
-        growth_contour_colors.append("#e04c3c")
-        growth_contour_levels.append(-1e-30)
-        growth_contour_colors.append("#fbe9f0")  # less saturated, very pale red
+        growth_contour_levels += [-100, -10**1.5, -10, -10**0.5, -1, 0]
+        growth_contour_colors += [
+            "#e04c3c",  # most intense red
+            "#f06d5c",
+            "#f28e7c",
+            "#f4af9c",
+            "#f6d0bc",
+            "#9d9494"   # least intense, grayish
+        ]
 
     growth_available_colors=[
-        "gray",
-                        "#99a099",
+                        "#949d94",
                         "#b2d8b2",
                         "#7fbf7f",
                         "#4caf50",
-                        "#006400",
-                        "#000000",
+                        "#009000",
+                        "#005000",
                     ]
     avail_iter = iter(growth_available_colors)
 
     if include_growth_rates:
         if isinstance(include_growth_rates, bool):
-            include_growth_rates = [0, 1, 10, 50, 100, np.inf]
+            include_growth_rates = [1, 10**0.5, 10, 10**1.5, 100, np.inf]
         for rate in include_growth_rates:
             growth_contour_levels.append(rate)
             growth_contour_colors.append(next(avail_iter))
@@ -174,7 +177,7 @@ def phase_diagram(
                 xg, yg, growthrates_h, colors=["#e04c3c"], levels=[-1e30, -1e-30]
             )
             ax.contourf(xg, yg, growthrates_h, colors=["#99a099"], levels=[-1e-30, 1])
-    ax.contour(xg, yg, growthrates_h, levels=[0], colors="black", linewidths=1)
+    # ax.contour(xg, yg, growthrates_h, levels=[-1, 1], colors="black", linewidths=1)
 
     spont_nuc = (
         vals.pivot(index=x_val, on=y_val, values="nucleation_rate")
@@ -213,7 +216,7 @@ def phase_diagram(
 
         # ax.contour(xg, yg, spont_nuc, levels=[1e-6], colors="black", linewidths=1)
 
-    avail1_colors = ["#ffe0b2", "#ffb74d", "#ff9800", "#f57c00", "#e65100", "#bf360c"]
+    avail1_colors = ["#ffe0b2", "#ffe082", "#ffd54f", "#ffca28", "#ffc107", "#ffb300"]
     avail1_iter = iter(avail1_colors)
 
     if include_growth1_rates:
@@ -233,9 +236,23 @@ def phase_diagram(
             growth1_contour_levels.append(rate)
             growth1_contour_colors.append(next(avail1_iter))
         ax.contourf(xg, yg, gv1, colors=growth1_contour_colors, levels=growth1_contour_levels)
-        ax.contour(xg, yg, gv1, levels=growth1_contour_levels, colors="black", linewidths=1)
+        # ax.contour(xg, yg, gv1, levels=growth1_contour_levels, colors="black", linewidths=1)
 
-    ax.set_xlabel(x_val)
-    ax.set_ylabel(y_val)
+    labeldict = {
+        "temperature": "Temperature (°C)",
+        "tile_conc": "Tile concentration (nM)",
+        "blocker_conc": "Blocker concentration (nM)",
+        "blocker_mult": "Blockers at $y \\times$ tile conc.",
+    }
+
+    ax.set_xlabel(labeldict[x_val])
+    ax.set_ylabel(labeldict[y_val])
+
+    if y_val in ("tile_conc", "blocker_conc"):
+        ax.yaxis.set_major_formatter(FuncFormatter(lambda y, _: f"{y*1e9:.0f}"))
+    for label in ax.get_yticklabels():
+        label.set_rotation(90)
+        # label.set_ha("center")
+        label.set_va("center")
 
     return ax
