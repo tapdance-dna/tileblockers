@@ -216,14 +216,19 @@ def run_single_simulation(temp, tile_conc, bconc, n_sims=12, var_per_mean2=0.01,
     ) / 3600.0 / 3.5
     growth_duration = time.time() - growth_start_time
     
-    # Nucleation rate simulation with timing
-    nucleation_start_time = time.time()
-    nucleation_rate_info = run_ffs_for_system(
-        temp=temp, cov_mult=blocker_mult, tile_conc=tile_conc,
-        var_per_mean2=var_per_mean2, min_nuc_rate=1e-14,
-        sys_fun=sys_fun
-    )
-    nucleation_duration = time.time() - nucleation_start_time
+    # Skip nucleation simulation if growth rate is negative (real nucleation rate would be zero)
+    if growth_rate < 0:
+        nucleation_rate_info = (0.0, 0.0, 0.0)  # (nucleation_rate, nucleation_rate_05, nucleation_rate_95)
+        nucleation_duration = 0.0
+    else:
+        # Nucleation rate simulation with timing
+        nucleation_start_time = time.time()
+        nucleation_rate_info = run_ffs_for_system(
+            temp=temp, cov_mult=blocker_mult, tile_conc=tile_conc,
+            var_per_mean2=var_per_mean2, min_nuc_rate=1e-14,
+            sys_fun=sys_fun
+        )
+        nucleation_duration = time.time() - nucleation_start_time
     
     return {
         'temperature': temp,
