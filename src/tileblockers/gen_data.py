@@ -7,6 +7,9 @@ Supports command line arguments for parameter ranges and outputs results line-by
 import argparse
 import csv
 import json
+import os
+import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
 from tqdm import tqdm
@@ -18,6 +21,7 @@ from tileblockers.twelve_helix_tube import (
     k9_system,
     k10_system
 )
+from tileblockers.constants import TILE_CONC
 import polars as pl
 import numpy as np
 
@@ -149,6 +153,41 @@ def generate_parameter_combinations(params_dict, specified_order):
     return recursive_combinations(0, {}), ordered_params
 
 
+def rate_per_hour_sim_with_melting_single_threaded(
+    temp, cov_mult, n_sims=100, length=256, tile_conc=TILE_CONC, tile_remaining=1.0,
+    sys_fun=twelve_helix_system, kblockparams=None, safe_growth_temp=46.0,
+    start_size=128*12, max_sim_time=10*3600
+):
+    """Single-threaded version of rate_per_hour_sim_with_melting for parallel parameter iteration"""
+    from tileblockers.twelve_helix_tube import new_state
+    import numpy as np
+    
+    if kblockparams is None:
+        kblockparams = {}
+    sys = sys_fun(safe_growth_temp, 0.0, 1e-7, 1.0, **kblockparams)
+
+    max_tiles = 12 * (length - 24)  # to be safe
+    ex_state = new_state(sys, length)
+    min_tiles = ex_state.ntiles + 24
+
+    states = [new_state(sys, length) for _ in range(n_sims)]
+    sys.evolve(states, size_max=start_size, for_time=max_sim_time, parallel=False)
+
+    times = np.array([state.time for state in states])
+    ntiles = np.array([state.ntiles for state in states])
+
+    sys = sys_fun(temp, cov_mult, tile_conc, tile_remaining, **kblockparams)
+    for x in states:
+        sys.update_state(x)
+    
+    sys.evolve(states, size_max=max_tiles, size_min=min_tiles, for_time=max_sim_time, parallel=False)
+
+    times_after = np.array([state.time for state in states])
+    ntiles_after = np.array([state.ntiles for state in states])
+
+    return ((ntiles_after - ntiles) / (times_after - times)).mean() * 3600
+
+
 def run_single_simulation(temp, tile_conc, bconc, n_sims=12, var_per_mean2=0.01, 
                          max_sim_time=36000, start_size=1536, length=256, sys_fun_name='simple_twelve_helix_system'):
     """Run both growth and nucleation simulation for a single parameter set"""
@@ -165,9 +204,9 @@ def run_single_simulation(temp, tile_conc, bconc, n_sims=12, var_per_mean2=0.01,
     }
     sys_fun = sys_fun_map[sys_fun_name]
     
-    # Growth rate simulation with timing
+    # Growth rate simulation with timing (using single-threaded version)
     growth_start_time = time.time()
-    growth_rate = rate_per_hour_sim_with_melting(
+    growth_rate = rate_per_hour_sim_with_melting_single_threaded(
         temp, blocker_mult, n_sims=n_sims, 
         length=length,
         sys_fun=sys_fun, 
@@ -240,6 +279,8 @@ Loop ordering:
                        help='System function to use for simulations (default: simple_twelve_helix_system)')
     parser.add_argument('--output_dir', type=str, default='.',
                        help='Output directory (default: current directory)')
+    parser.add_argument('--n_threads', type=int, default=None,
+                       help='Number of parallel threads (default: number of CPU cores)')
     
     # Track order of parameter specification
     import sys
@@ -285,73 +326,96 @@ Loop ordering:
     with open(json_path, 'w') as json_file:
         json.dump(param_info, json_file, indent=2, ensure_ascii=False)
     
+    # Determine number of threads
+    n_threads = args.n_threads if args.n_threads is not None else os.cpu_count()
     print(f"Parameter information saved to: {json_path}")
     print(f"Parameter loop order: {' -> '.join(loop_order)}")
+    print(f"Using {n_threads} parallel threads")
     
-    # Prepare CSV file and write header
+    # Prepare parameter combinations list
+    combinations_list = list(combinations_generator)
+    total_sims = len(combinations_list)
+    
+    # Thread-safe CSV writing
+    csv_lock = threading.Lock()
     fieldnames = ['temperature', 'tile_conc', 'blocker_conc', 'blocker_mult', 'growth_rate', 'nucleation_rate', 'nucleation_rate_05', 'nucleation_rate_95']
     
+    def run_and_write_simulation(combination):
+        """Wrapper function to run simulation and handle writing"""
+        temp = combination['temps']
+        tile_conc = combination['tile_concs'] 
+        bconc = combination['bconcs']
+        
+        try:
+            result = run_single_simulation(
+                temp, tile_conc, bconc, args.n_sims, args.var_per_mean2,
+                args.max_sim_time, args.start_size, args.length, args.sys_fun
+            )
+            
+            # Remove timing info before writing to CSV
+            csv_result = {k: v for k, v in result.items() if not k.startswith('_')}
+            
+            # Thread-safe CSV writing
+            with csv_lock:
+                with open(output_path, 'a', newline='') as csvfile:
+                    writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+                    writer.writerow(csv_result)
+                    csvfile.flush()
+            
+            return result
+            
+        except Exception as e:
+            print(f"\nError in simulation T={temp}, tile_conc={tile_conc:.2e}, bconc={bconc:.2e}: {e}")
+            # Write a row with NaN values to maintain structure
+            error_result = {
+                'temperature': temp,
+                'tile_conc': tile_conc,
+                'blocker_conc': bconc,
+                'blocker_mult': bconc / tile_conc,
+                'growth_rate': float('nan'),
+                'nucleation_rate': float('nan'),
+                'nucleation_rate_05': float('nan'),
+                'nucleation_rate_95': float('nan')
+            }
+            
+            # Thread-safe CSV writing
+            with csv_lock:
+                with open(output_path, 'a', newline='') as csvfile:
+                    writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+                    writer.writerow(error_result)
+                    csvfile.flush()
+            
+            return None
+    
+    # Write CSV header
     with open(output_path, 'w', newline='') as csvfile:
         writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
         writer.writeheader()
-        
-        # Run simulations and write results line by line
-        total_sims = len(temps) * len(tile_concs) * len(bconcs)
-        
-        # Track maximum durations and most recent results
-        last_growth_duration = 0.0
-        last_nucleation_duration = 0.0
-        last_growth_rate = None
-        last_nucleation_rate = None
-        
-        with tqdm(total=total_sims, desc="Simulations") as pbar:
-            for combination in combinations_generator:
-                temp = combination['temps']
-                tile_conc = combination['tile_concs'] 
-                bconc = combination['bconcs']
-                
+    
+    # Run parallel simulations
+    with tqdm(total=total_sims, desc="Simulations") as pbar:
+        with ThreadPoolExecutor(max_workers=n_threads) as executor:
+            # Submit all tasks
+            futures = [executor.submit(run_and_write_simulation, combination) for combination in combinations_list]
+            
+            # Wait for completion and update progress
+            for future in as_completed(futures):
                 try:
-                    result = run_single_simulation(
-                        temp, tile_conc, bconc, args.n_sims, args.var_per_mean2,
-                        args.max_sim_time, args.start_size, args.length, args.sys_fun
-                    )
-                    
-                    # Track timing and results
-                    last_growth_duration = result['_growth_duration']
-                    last_nucleation_duration = result['_nucleation_duration']
-                    last_growth_rate = result['growth_rate']
-                    last_nucleation_rate = result['nucleation_rate']
-                    
-                    # Remove timing info before writing to CSV
-                    csv_result = {k: v for k, v in result.items() if not k.startswith('_')}
-                    writer.writerow(csv_result)
-                    csvfile.flush()  # Ensure data is written immediately
-                    
-                    pbar.set_postfix({
-                        'T': f'{temp:.1f}',
-                        'tc': f'{tile_conc:.1e}M',
-                        'bc': f'{bconc:.1e}M',
-                        'gr_t': f'{last_growth_duration:.1f}s',
-                        'nr_t': f'{last_nucleation_duration:.1f}s',
-                        'gr': f'{last_growth_rate:.1e}',
-                        'nr': f'{last_nucleation_rate:.1e}'
-                    })
-                    
+                    result = future.result()  # This will raise any exceptions that occurred
+                    if result:  # If simulation succeeded
+                        pbar.set_postfix({
+                            'T': f'{result["temperature"]:.1f}',
+                            'tc': f'{result["tile_conc"]:.1e}M',
+                            'bc': f'{result["blocker_conc"]:.1e}M',
+                            'gr_t': f'{result["_growth_duration"]:.1f}s',
+                            'nr_t': f'{result["_nucleation_duration"]:.1f}s',
+                            'gr': f'{result["growth_rate"]:.1e}',
+                            'nr': f'{result["nucleation_rate"]:.1e}'
+                        })
                 except Exception as e:
-                    print(f"\nError in simulation T={temp}, tile_conc={tile_conc:.2e}, bconc={bconc:.2e}: {e}")
-                    # Write a row with NaN values to maintain structure
-                    result = {
-                        'temperature': temp,
-                        'tile_conc': tile_conc,
-                        'blocker_conc': bconc,
-                        'blocker_mult': bconc / tile_conc,
-                        'growth_rate': float('nan'),
-                        'nucleation_rate': float('nan')
-                    }
-                    writer.writerow(result)
-                    csvfile.flush()
-                
-                pbar.update(1)
+                    print(f"\nUnexpected error in thread: {e}")
+                finally:
+                    pbar.update(1)
     
     print(f"\nSimulations completed! Results saved to: {output_path}")
     
