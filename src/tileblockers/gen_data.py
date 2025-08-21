@@ -299,8 +299,8 @@ Loop ordering:
         total_sims = len(temps) * len(tile_concs) * len(bconcs)
         
         # Track maximum durations and most recent results
-        max_growth_duration = 0.0
-        max_nucleation_duration = 0.0
+        last_growth_duration = 0.0
+        last_nucleation_duration = 0.0
         last_growth_rate = None
         last_nucleation_rate = None
         
@@ -317,8 +317,8 @@ Loop ordering:
                     )
                     
                     # Track timing and results
-                    max_growth_duration = max(max_growth_duration, result['_growth_duration'])
-                    max_nucleation_duration = max(max_nucleation_duration, result['_nucleation_duration'])
+                    last_growth_duration = result['_growth_duration']
+                    last_nucleation_duration = result['_nucleation_duration']
                     last_growth_rate = result['growth_rate']
                     last_nucleation_rate = result['nucleation_rate']
                     
@@ -328,11 +328,11 @@ Loop ordering:
                     csvfile.flush()  # Ensure data is written immediately
                     
                     pbar.set_postfix({
-                        'T': f'{temp:.1f}°C',
-                        'tile': f'{tile_conc:.1e}M',
-                        'bconc': f'{bconc:.1e}M',
-                        'max_gr_t': f'{max_growth_duration:.1f}s',
-                        'max_nr_t': f'{max_nucleation_duration:.1f}s',
+                        'T': f'{temp:.1f}',
+                        'tc': f'{tile_conc:.1e}M',
+                        'bc': f'{bconc:.1e}M',
+                        'gr_t': f'{last_growth_duration:.1f}s',
+                        'nr_t': f'{last_nucleation_duration:.1f}s',
                         'gr': f'{last_growth_rate:.1e}',
                         'nr': f'{last_nucleation_rate:.1e}'
                     })
@@ -350,7 +350,6 @@ Loop ordering:
                     }
                     writer.writerow(result)
                     csvfile.flush()
-                    raise e
                 
                 pbar.update(1)
     
