@@ -57,7 +57,7 @@ def parse_parameter(param_str):
         return [float(param_str)]
 
 
-def generate_filename(temps, tile_concs, bconcs):
+def generate_filename(temps, tile_concs, bconcs=None, bmults=None):
     """Generate filename based on parameter ranges"""
     def format_range(values, name):
         if len(values) == 1:
@@ -67,19 +67,27 @@ def generate_filename(temps, tile_concs, bconcs):
     
     temp_str = format_range(temps, "T")
     tile_str = format_range(tile_concs, "tile")
-    bconc_str = format_range(bconcs, "bconc")
     
-    return f"phase_diagram_data_{temp_str}_{tile_str}_{bconc_str}.csv"
+    if bmults is not None:
+        blocker_str = format_range(bmults, "bmult")
+    else:
+        blocker_str = format_range(bconcs, "bconc")
+    
+    return f"phase_diagram_data_{temp_str}_{tile_str}_{blocker_str}.csv"
 
 
-def create_parameter_info(temps, tile_concs, bconcs, n_sims, var_per_mean2, args, loop_order=None):
+def create_parameter_info(temps, tile_concs, bconcs=None, bmults=None, n_sims=None, var_per_mean2=None, args=None, loop_order=None):
     """Create parameter information dictionary for JSON output"""
+    blocker_count = len(bmults) if bmults is not None else len(bconcs)
+    blocker_param_name = 'bmults' if bmults is not None else 'bconcs'
+    default_loop_order = ['temps', 'tile_concs', blocker_param_name]
+    
     return {
         "generation_info": {
             "timestamp": datetime.now().isoformat(),
             "script_version": "tileblockers-gen-data",
-            "total_simulations": len(temps) * len(tile_concs) * len(bconcs),
-            "loop_order": loop_order or ['temps', 'tile_concs', 'bconcs'],
+            "total_simulations": len(temps) * len(tile_concs) * blocker_count,
+            "loop_order": loop_order or default_loop_order,
             "loop_order_note": "Parameters are nested in this order (first = outer loop, last = inner loop)"
         },
         "simulation_parameters": {
@@ -107,11 +115,19 @@ def create_parameter_info(temps, tile_concs, bconcs, n_sims, var_per_mean2, args
                 "note": "Values are multiplied by 1e-9 from input specification"
             },
             "blocker_concentrations": {
-                "values": bconcs.tolist() if hasattr(bconcs, 'tolist') else list(bconcs),
+                "values": bconcs.tolist() if hasattr(bconcs, 'tolist') else list(bconcs) if bconcs is not None else None,
                 "unit": "M",
-                "count": len(bconcs),
-                "range": f"{bconcs[0]:.2e} to {bconcs[-1]:.2e}" if len(bconcs) > 1 else f"{bconcs[0]:.2e}",
-                "original_spec": args.bconcs
+                "count": len(bconcs) if bconcs is not None else None,
+                "range": f"{bconcs[0]:.2e} to {bconcs[-1]:.2e}" if bconcs is not None and len(bconcs) > 1 else f"{bconcs[0]:.2e}" if bconcs is not None else None,
+                "original_spec": getattr(args, 'bconcs', None) if args else None
+            },
+            "blocker_multipliers": {
+                "values": bmults.tolist() if hasattr(bmults, 'tolist') else list(bmults) if bmults is not None else None,
+                "unit": "dimensionless (ratio)",
+                "count": len(bmults) if bmults is not None else None,
+                "range": f"{bmults[0]:.2e} to {bmults[-1]:.2e}" if bmults is not None and len(bmults) > 1 else f"{bmults[0]:.2e}" if bmults is not None else None,
+                "original_spec": getattr(args, 'bmults', None) if args else None,
+                "note": "Ratio of blocker concentration to tile concentration" if bmults is not None else None
             }
         },
         "output_info": {
@@ -126,7 +142,8 @@ def create_parameter_info(temps, tile_concs, bconcs, n_sims, var_per_mean2, args
 def generate_parameter_combinations(params_dict, specified_order):
     """Generate parameter combinations in nested loop order based on specification order"""
     # Default order for unspecified parameters
-    default_order = ['temps', 'tile_concs', 'bconcs']
+    blocker_param = 'bmults' if 'bmults' in params_dict else 'bconcs'
+    default_order = ['temps', 'tile_concs', blocker_param]
     
     # Create ordered parameter list: specified parameters first, then unspecified ones
     ordered_params = []
@@ -267,8 +284,10 @@ Loop ordering:
                        help='Temperature range (default: 30:55:0.5)')
     parser.add_argument('--tile_concs', type=str, nargs='?', const='log:1:3:20', default='log:1:3:20',
                        help='Tile concentration range (default: log:1:3:20, results multiplied by 1e-9)')
-    parser.add_argument('--bconcs', type=str, nargs='?', const='2.5e-6', default='2.5e-6',
+    parser.add_argument('--bconcs', type=str, nargs='?', const='2.5e-6', default=None,
                        help='Blocker concentration range (default: 2.5e-6)')
+    parser.add_argument('--bmults', type=str, nargs='?', const='2.5', default=None,
+                       help='Blocker concentration multiplier range (ratio of blocker_conc/tile_conc)')
     parser.add_argument('--n_sims', type=int, default=12,
                        help='Number of simulations per parameter set (default: 12)')
     parser.add_argument('--var_per_mean2', type=float, default=0.01,
@@ -290,7 +309,7 @@ Loop ordering:
     # Track order of parameter specification
     import sys
     specified_params = []
-    param_names = ['--temps', '--tile_concs', '--bconcs']
+    param_names = ['--temps', '--tile_concs', '--bconcs', '--bmults']
     
     for i, arg in enumerate(sys.argv[1:]):
         if arg in param_names:
@@ -298,36 +317,55 @@ Loop ordering:
     
     args = parser.parse_args()
     
+    # Validate that exactly one of bconcs or bmults is specified
+    if args.bconcs is not None and args.bmults is not None:
+        parser.error("Cannot specify both --bconcs and --bmults. Use one or the other.")
+    if args.bconcs is None and args.bmults is None:
+        # Default to bconcs for backward compatibility
+        args.bconcs = '2.5e-6'
+    
     # Parse parameter ranges
     temps = parse_parameter(args.temps)
     tile_concs = np.array(parse_parameter(args.tile_concs)) * 1e-9  # Convert to M
-    bconcs = parse_parameter(args.bconcs)
     
-    print(f"Temperature range: {len(temps)} values from {temps[0]:.1f} to {temps[-1]:.1f}")
-    print(f"Tile concentration range: {len(tile_concs)} values from {tile_concs[0]:.2e} to {tile_concs[-1]:.2e} M")
-    print(f"Blocker concentration range: {len(bconcs)} values from {bconcs[0]:.2e} to {bconcs[-1]:.2e} M")
+    bconcs = None
+    bmults = None
+    if args.bconcs is not None:
+        bconcs = parse_parameter(args.bconcs)
+        print(f"Temperature range: {len(temps)} values from {temps[0]:.1f} to {temps[-1]:.1f}")
+        print(f"Tile concentration range: {len(tile_concs)} values from {tile_concs[0]:.2e} to {tile_concs[-1]:.2e} M")
+        print(f"Blocker concentration range: {len(bconcs)} values from {bconcs[0]:.2e} to {bconcs[-1]:.2e} M")
+    else:
+        bmults = parse_parameter(args.bmults)
+        print(f"Temperature range: {len(temps)} values from {temps[0]:.1f} to {temps[-1]:.1f}")
+        print(f"Tile concentration range: {len(tile_concs)} values from {tile_concs[0]:.2e} to {tile_concs[-1]:.2e} M")
+        print(f"Blocker multiplier range: {len(bmults)} values from {bmults[0]:.2f} to {bmults[-1]:.2f}")
     
     # Generate output filename and path
-    filename = generate_filename(temps, tile_concs, bconcs)
+    filename = generate_filename(temps, tile_concs, bconcs, bmults)
     output_path = Path(args.output_dir) / filename
     json_path = output_path.with_suffix('.json')
     
     print(f"Output CSV file: {output_path}")
     print(f"Output JSON file: {json_path}")
-    print(f"Total simulations: {len(temps) * len(tile_concs) * len(bconcs)}")
+    blocker_count = len(bmults) if bmults is not None else len(bconcs)
+    print(f"Total simulations: {len(temps) * len(tile_concs) * blocker_count}")
     
     # Prepare parameters for dynamic loop generation
     params_dict = {
         'temps': temps,
         'tile_concs': tile_concs,
-        'bconcs': bconcs
     }
+    if bconcs is not None:
+        params_dict['bconcs'] = bconcs
+    else:
+        params_dict['bmults'] = bmults
     
     # Generate parameter combinations with specified ordering
     combinations_generator, loop_order = generate_parameter_combinations(params_dict, specified_params)
     
     # Create and save parameter information JSON
-    param_info = create_parameter_info(temps, tile_concs, bconcs, args.n_sims, args.var_per_mean2, args, loop_order)
+    param_info = create_parameter_info(temps, tile_concs, bconcs, bmults, args.n_sims, args.var_per_mean2, args, loop_order)
     with open(json_path, 'w') as json_file:
         json.dump(param_info, json_file, indent=2, ensure_ascii=False)
     
@@ -348,8 +386,14 @@ Loop ordering:
     def run_and_write_simulation(combination):
         """Wrapper function to run simulation and handle writing"""
         temp = combination['temps']
-        tile_conc = combination['tile_concs'] 
-        bconc = combination['bconcs']
+        tile_conc = combination['tile_concs']
+        
+        # Handle both bconcs and bmults
+        if 'bconcs' in combination:
+            bconc = combination['bconcs']
+        else:
+            bmult = combination['bmults']
+            bconc = bmult * tile_conc
         
         try:
             result = run_single_simulation(
