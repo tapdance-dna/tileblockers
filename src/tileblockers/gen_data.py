@@ -8,7 +8,6 @@ import argparse
 import csv
 import json
 import os
-import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
@@ -379,44 +378,28 @@ Loop ordering:
     combinations_list = list(combinations_generator)
     total_sims = len(combinations_list)
     
-    # Thread-safe CSV writing
-    csv_lock = threading.Lock()
     fieldnames = ['temperature', 'tile_conc', 'blocker_conc', 'blocker_mult', 'growth_rate', 'nucleation_rate', 'nucleation_rate_05', 'nucleation_rate_95']
-    
-    def run_and_write_simulation(combination):
-        """Wrapper function to run simulation and handle writing"""
+
+    def run_simulation(combination):
+        """Run simulation for a single parameter combination"""
         temp = combination['temps']
         tile_conc = combination['tile_concs']
-        
+
         # Handle both bconcs and bmults
         if 'bconcs' in combination:
             bconc = combination['bconcs']
         else:
             bmult = combination['bmults']
             bconc = bmult * tile_conc
-        
+
         try:
-            result = run_single_simulation(
+            return run_single_simulation(
                 temp, tile_conc, bconc, args.n_sims, args.var_per_mean2,
                 args.max_sim_time, args.start_size, args.length, args.sys_fun
             )
-            
-            # Remove timing info before writing to CSV
-            csv_result = {k: v for k, v in result.items() if not k.startswith('_')}
-            
-            # Thread-safe CSV writing
-            with csv_lock:
-                with open(output_path, 'a', newline='') as csvfile:
-                    writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
-                    writer.writerow(csv_result)
-                    csvfile.flush()
-            
-            return result
-            
         except Exception as e:
             print(f"\nError in simulation T={temp}, tile_conc={tile_conc:.2e}, bconc={bconc:.2e}: {e}")
-            # Write a row with NaN values to maintain structure
-            error_result = {
+            return {
                 'temperature': temp,
                 'tile_conc': tile_conc,
                 'blocker_conc': bconc,
@@ -426,38 +409,29 @@ Loop ordering:
                 'nucleation_rate_05': float('nan'),
                 'nucleation_rate_95': float('nan')
             }
-            
-            # Thread-safe CSV writing
-            with csv_lock:
-                with open(output_path, 'a', newline='') as csvfile:
-                    writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
-                    writer.writerow(error_result)
-                    csvfile.flush()
-            
-            return None
-    
-    # Write CSV header
-    with open(output_path, 'w', newline='') as csvfile:
-        writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
-        writer.writeheader()
-    
-    # Run parallel simulations
+
+    # Run parallel simulations, collecting results in parameter order
+    results = [None] * total_sims
+
     with tqdm(total=total_sims, desc="Simulations") as pbar:
         with ThreadPoolExecutor(max_workers=n_threads) as executor:
-            # Submit all tasks
-            futures = [executor.submit(run_and_write_simulation, combination) for combination in combinations_list]
-            
-            # Wait for completion and update progress
-            for future in as_completed(futures):
+            future_to_index = {
+                executor.submit(run_simulation, combo): i
+                for i, combo in enumerate(combinations_list)
+            }
+
+            for future in as_completed(future_to_index):
+                idx = future_to_index[future]
                 try:
-                    result = future.result()  # This will raise any exceptions that occurred
-                    if result:  # If simulation succeeded
+                    result = future.result()
+                    results[idx] = result
+                    if result:
                         pbar.set_postfix({
                             'T': f'{result["temperature"]:.1f}',
                             'tc': f'{result["tile_conc"]:.1e}M',
                             'bc': f'{result["blocker_conc"]:.1e}M',
-                            'gr_t': f'{result["_growth_duration"]:.1f}s',
-                            'nr_t': f'{result["_nucleation_duration"]:.1f}s',
+                            'gr_t': f'{result.get("_growth_duration", 0):.1f}s',
+                            'nr_t': f'{result.get("_nucleation_duration", 0):.1f}s',
                             'gr': f'{result["growth_rate"]:.1e}',
                             'nr': f'{result["nucleation_rate"]:.1e}'
                         })
@@ -465,6 +439,15 @@ Loop ordering:
                     print(f"\nUnexpected error in thread: {e}")
                 finally:
                     pbar.update(1)
+
+    # Write CSV in parameter order
+    with open(output_path, 'w', newline='') as csvfile:
+        writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+        writer.writeheader()
+        for result in results:
+            if result is not None:
+                csv_result = {k: v for k, v in result.items() if not k.startswith('_')}
+                writer.writerow(csv_result)
     
     print(f"\nSimulations completed! Results saved to: {output_path}")
     

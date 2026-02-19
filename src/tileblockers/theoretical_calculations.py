@@ -1,11 +1,11 @@
 import numpy as np
-from rgrow.rgrow import string_dna_dg_ds
 from .constants import R_CONST, TILE_CONC, SINGLE_SEQ, DS_LAT, K_F
 
 def calc_gval(seq=None, temp=37, dg=None, dg37=None, ds=None, adj_bdg37=0.0, adj_bds=0.0):
     if dg is not None:
         return dg
     elif seq is not None:
+        from rgrow.rgrow import string_dna_dg_ds
         gsval37 = string_dna_dg_ds(seq)
         return gsval37[0] - (temp - 37) * (gsval37[1] + adj_bds) + adj_bdg37
     elif dg37 is not None and ds is not None:

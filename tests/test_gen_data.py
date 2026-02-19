@@ -203,7 +203,7 @@ class TestScriptIntegration:
                 "--output_dir", tmpdir
             ]
             
-            result = subprocess.run(cmd, capture_output=True, text=True, cwd="/var/home/const/repos/tileblockers")
+            result = subprocess.run(cmd, capture_output=True, text=True, cwd=str(Path(__file__).resolve().parent.parent))
             
             # Check that script completed successfully
             assert result.returncode == 0, f"Script failed with stderr: {result.stderr}"
@@ -246,7 +246,7 @@ class TestScriptIntegration:
                 "--output_dir", tmpdir
             ]
             
-            result = subprocess.run(cmd, capture_output=True, text=True, cwd="/var/home/const/repos/tileblockers")
+            result = subprocess.run(cmd, capture_output=True, text=True, cwd=str(Path(__file__).resolve().parent.parent))
             
             assert result.returncode == 0, f"Script failed with stderr: {result.stderr}"
             
@@ -275,7 +275,7 @@ class TestScriptIntegration:
                 "--output_dir", tmpdir
             ]
             
-            result = subprocess.run(cmd, capture_output=True, text=True, cwd="/var/home/const/repos/tileblockers")
+            result = subprocess.run(cmd, capture_output=True, text=True, cwd=str(Path(__file__).resolve().parent.parent))
             
             assert result.returncode == 0, f"Script failed with stderr: {result.stderr}"
             
@@ -310,7 +310,7 @@ class TestScriptIntegration:
                 "--output_dir", tmpdir
             ]
             
-            result = subprocess.run(cmd, capture_output=True, text=True, cwd="/var/home/const/repos/tileblockers")
+            result = subprocess.run(cmd, capture_output=True, text=True, cwd=str(Path(__file__).resolve().parent.parent))
             
             assert result.returncode == 0, f"Script failed with stderr: {result.stderr}"
             
@@ -355,7 +355,7 @@ class TestScriptIntegration:
                 "--output_dir", tmpdir
             ]
             
-            result = subprocess.run(cmd, capture_output=True, text=True, cwd="/var/home/const/repos/tileblockers")
+            result = subprocess.run(cmd, capture_output=True, text=True, cwd=str(Path(__file__).resolve().parent.parent))
             
             assert result.returncode == 0, f"Script failed with stderr: {result.stderr}"
             
@@ -386,7 +386,7 @@ class TestScriptIntegration:
                 "--output_dir", tmpdir
             ]
             
-            result = subprocess.run(cmd, capture_output=True, text=True, cwd="/var/home/const/repos/tileblockers")
+            result = subprocess.run(cmd, capture_output=True, text=True, cwd=str(Path(__file__).resolve().parent.parent))
             
             assert result.returncode == 0, f"Script failed with stderr: {result.stderr}"
             

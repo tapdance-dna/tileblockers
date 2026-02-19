@@ -1,9 +1,10 @@
-from typing import Any, Callable
-import rgrow as rg
+from __future__ import annotations
+from typing import Any, Callable, TYPE_CHECKING
 import numpy as np
-from rgrow.kblock import KBlockTile, KBlockParams
 import polars as pl
-from rgrow import KBlock
+
+if TYPE_CHECKING:
+    import rgrow as rg
 
 from .theoretical_calculations import growth_rate
 
@@ -84,6 +85,8 @@ def simple_twelve_helix_system(
 ) -> rg.System:
     if kblockparams is None:
         kblockparams = {}
+    from rgrow.kblock import KBlock, KBlockTile, KBlockParams
+
     tiles = [
         KBlockTile(
             f"tile_{i}",
@@ -112,7 +115,7 @@ def simple_twelve_helix_system(
             (8, 2): ("tile_9"),
             (10, 2): ("tile_11"),
         }
-    
+
     def blocker_conc_list(
         blocker_mult: float, tile_conc: float = TILE_CONC
     ) -> dict[str, float]:
@@ -126,7 +129,7 @@ def simple_twelve_helix_system(
     ]
     binding_strength = dict(zip(glue_names, glue_seqs))
     params = KBlockParams(
-        tiles, blocker_conc_list(cov_mult, tile_conc), seed, binding_strength, 
+        tiles, blocker_conc_list(cov_mult, tile_conc), seed, binding_strength,
         temp=temp, **kblockparams
     )
     return KBlock(params)
@@ -180,6 +183,8 @@ def twelve_helix_system(
     diag: bool = False,
     kblockparams: dict[str, Any] | None = None
 ) -> rg.System:
+    from rgrow.kblock import KBlock, KBlockTile, KBlockParams
+
     if kblockparams is None:
         kblockparams = {}
     tiles = [
@@ -210,7 +215,7 @@ def twelve_helix_system(
             (8, 2): ("tile_9"),
             (10, 2): ("tile_11"),
         }
-    
+
     def blocker_conc_list(
         blocker_conc: float, tile_conc: float = TILE_CONC
     ) -> dict[str, float]:
@@ -235,6 +240,8 @@ def k9_system(
     tile_remaining: float = 1.0,
     kblockparams: dict[str, Any] | None = None
 ) -> rg.KBlock:
+    from rgrow.kblock import KBlock, KBlockTile, KBlockParams
+
     if kblockparams is None:
         kblockparams = {}
     T9_ALL_SEQS = pl.read_csv("experimental-data/sequences-9-no-nonrep.csv")
@@ -287,6 +294,8 @@ def k10_system(
     tile_remaining: float = 1.0,
     kblockparams: dict[str, Any] | None = None
 ) -> rg.KBlock:
+    from rgrow.kblock import KBlock, KBlockTile, KBlockParams
+
     if kblockparams is None:
         kblockparams = {}
     T9_ALL_SEQS = pl.read_csv("experimental-data/seqs-10.csv")
@@ -346,6 +355,7 @@ def k10_system(
 
 
 def new_state(system: rg.System, length: int = 256, diag: bool = False) -> rg.State:
+    import rgrow as rg
     st = rg.State((12, length), "tube-diag" if diag else "tube", "none")
     system.setup_state(st)
     return st

@@ -111,6 +111,19 @@ def draw_phase_diagram(
     else:
         vals = df
 
+    # Filter out rows with null growth_rate values
+    vals = vals.filter(pl.col("growth_rate").is_not_null())
+
+    if len(vals) == 0:
+        raise ValueError("No valid data remaining after filtering out null values")
+
+    # Check for complete grid
+    unique_x = vals[x_val].unique()
+    unique_y = vals[y_val].unique()
+    expected_combos = len(unique_x) * len(unique_y)
+    actual_combos = vals.select(x_val, y_val).unique().height
+    if actual_combos != expected_combos:
+        raise ValueError("Incomplete data grid after null filtering")
 
     if ax is None:
         fig, ax = plt.subplots()
