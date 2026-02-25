@@ -197,6 +197,9 @@ def draw_phase_diagram(
                 colors=growth_contour_colors,
                 levels=growth_contour_levels,
             )
+            # Thin contour lines to visually distinguish fills
+            finite_growth_levels = [l for l in growth_contour_levels if np.isfinite(l)]
+            ax.contour(xg, yg, growthrates_h, levels=finite_growth_levels, colors='black', linewidths=0.2, linestyles='solid')
         case "heatmap":
             from matplotlib.colors import LinearSegmentedColormap, BoundaryNorm
 
@@ -240,6 +243,9 @@ def draw_phase_diagram(
         match nuc_type:
             case "contour":
                 ax.contourf(xg, yg, spont_nuc, colors=spont_nuc_contour_colors, levels=spont_nuc_contour_levels)
+                # Thin contour lines to visually distinguish fills
+                finite_nuc_levels = [l for l in spont_nuc_contour_levels if np.isfinite(l)]
+                ax.contour(xg, yg, spont_nuc, levels=finite_nuc_levels, colors='black', linewidths=0.2, linestyles='solid')
             case "heatmap":
                 from matplotlib.colors import LinearSegmentedColormap
 
@@ -271,7 +277,9 @@ def draw_phase_diagram(
             growth1_contour_levels.append(rate)
             growth1_contour_colors.append(next(avail1_iter))
         ax.contourf(xg, yg, gv1, colors=growth1_contour_colors, levels=growth1_contour_levels)
-        # ax.contour(xg, yg, gv1, levels=growth1_contour_levels, colors="black", linewidths=1)
+        # Thin contour lines to visually distinguish fills
+        finite_growth1_levels = [l for l in growth1_contour_levels if np.isfinite(l)]
+        ax.contour(xg, yg, gv1, levels=finite_growth1_levels, colors='black', linewidths=0.2, linestyles='solid')
 
     labeldict = {
         "temperature": "Temperature (°C)",
