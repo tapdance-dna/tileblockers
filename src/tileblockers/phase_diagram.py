@@ -104,6 +104,7 @@ def draw_phase_diagram(
     include_growth_rates: bool | list[float] = True,
     include_growth1_rates: bool | list[float] = True,
     include_nucleation: bool | list[float] = True,
+    nuc_scale: float = 1.0,
     agg="mean"
 ):
     if filt is not None:
@@ -236,7 +237,7 @@ def draw_phase_diagram(
         spont_nuc_contour_levels = []
         spont_nuc_contour_colors = []
         if isinstance(include_nucleation, bool):
-            include_nucleation = [1e-8, 1e-7, 1e-6, 1e-5, 1e-4, np.inf]
+            include_nucleation = [1e-8 * nuc_scale, 1e-7 * nuc_scale, 1e-6 * nuc_scale, 1e-5 * nuc_scale, 1e-4 * nuc_scale, np.inf]
         for rate in include_nucleation:
             spont_nuc_contour_levels.append(rate)
             spont_nuc_contour_colors.append(next(avail_nuc_iter))
@@ -258,28 +259,32 @@ def draw_phase_diagram(
 
 
     if include_growth1_rates:
-        avail1_colors = ["#ffe0b2", "#ffe082", "#ffd54f", "#ffca28", "#ffc107", "#ffb300"]
-        avail1_iter = iter(avail1_colors)
-        if isinstance(include_growth1_rates, bool):
-            include_growth1_rates = [0, 10, 50, 100, 500, np.inf]
-        gv1 = (
-            vals.pivot(index=x_val, on=y_val, values="growth_rate_1bond", aggregate_function=agg)
-            .select(pl.exclude(x_val))
-            .to_numpy()
-        ) * 3600
-        
-        growth1_contour_levels = []
-        growth1_contour_colors = []
-        if isinstance(include_growth1_rates, bool):
-            growth1_contour_levels.append(0)
-            growth1_contour_colors.append("#ff9800")
-        for rate in include_growth1_rates:
-            growth1_contour_levels.append(rate)
-            growth1_contour_colors.append(next(avail1_iter))
-        ax.contourf(xg, yg, gv1, colors=growth1_contour_colors, levels=growth1_contour_levels)
-        # Thin contour lines to visually distinguish fills
-        finite_growth1_levels = [l for l in growth1_contour_levels if np.isfinite(l)]
-        ax.contour(xg, yg, gv1, levels=finite_growth1_levels, colors='black', linewidths=0.2, linestyles='solid')
+        if "growth_rate_1bond" not in vals.columns:
+            import warnings
+            warnings.warn("growth_rate_1bond column missing, skipping 1-bond growth rate overlay")
+        else:
+            avail1_colors = ["#ffe0b2", "#ffe082", "#ffd54f", "#ffca28", "#ffc107", "#ffb300"]
+            avail1_iter = iter(avail1_colors)
+            if isinstance(include_growth1_rates, bool):
+                include_growth1_rates = [0, 10, 50, 100, 500, np.inf]
+            gv1 = (
+                vals.pivot(index=x_val, on=y_val, values="growth_rate_1bond", aggregate_function=agg)
+                .select(pl.exclude(x_val))
+                .to_numpy()
+            ) * 3600
+
+            growth1_contour_levels = []
+            growth1_contour_colors = []
+            if isinstance(include_growth1_rates, bool):
+                growth1_contour_levels.append(0)
+                growth1_contour_colors.append("#ff9800")
+            for rate in include_growth1_rates:
+                growth1_contour_levels.append(rate)
+                growth1_contour_colors.append(next(avail1_iter))
+            ax.contourf(xg, yg, gv1, colors=growth1_contour_colors, levels=growth1_contour_levels)
+            # Thin contour lines to visually distinguish fills
+            finite_growth1_levels = [l for l in growth1_contour_levels if np.isfinite(l)]
+            ax.contour(xg, yg, gv1, levels=finite_growth1_levels, colors='black', linewidths=0.2, linestyles='solid')
 
     labeldict = {
         "temperature": "Temperature (°C)",

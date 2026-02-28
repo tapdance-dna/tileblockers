@@ -13,14 +13,19 @@ from datetime import datetime
 from pathlib import Path
 from tqdm import tqdm
 from tileblockers.twelve_helix_tube import (
-    rate_per_hour_sim_with_melting, 
-    run_ffs_for_system, 
+    rate_per_hour_sim_with_melting,
+    run_ffs_for_system,
     simple_twelve_helix_system,
     twelve_helix_system,
     k9_system,
     k10_system
 )
 from tileblockers.constants import TILE_CONC
+from tileblockers.theoretical_calculations import (
+    growth_rate as theory_growth_rate,
+    pa_full_bconc,
+    nuc_rate_rect,
+)
 import polars as pl
 import numpy as np
 
@@ -131,8 +136,9 @@ def create_parameter_info(temps, tile_concs, bconcs=None, bmults=None, n_sims=No
         },
         "output_info": {
             "csv_columns": [
-                "temperature", "tile_conc", "blocker_conc", "blocker_mult", 
-                "growth_rate", "nucleation_rate", "nucleation_rate_05", "nucleation_rate_95"
+                "temperature", "tile_conc", "blocker_conc", "blocker_mult",
+                "growth_rate", "nucleation_rate", "nucleation_rate_05", "nucleation_rate_95",
+                "growth_rate_1bond", "pa", "growth_rate_theory", "nucleation_rate_theory"
             ]
         }
     }
@@ -204,7 +210,7 @@ def rate_per_hour_sim_with_melting_single_threaded(
     return ((ntiles_after - ntiles) / (times_after - times)).mean() * 3600
 
 
-def run_single_simulation(temp, tile_conc, bconc, n_sims=12, var_per_mean2=0.01, 
+def run_single_simulation(temp, tile_conc, bconc, n_sims=24, var_per_mean2=0.001, 
                          max_sim_time=36000, start_size=1536, length=256, sys_fun_name='simple_twelve_helix_system'):
     """Run both growth and nucleation simulation for a single parameter set"""
     import time
@@ -241,7 +247,7 @@ def run_single_simulation(temp, tile_conc, bconc, n_sims=12, var_per_mean2=0.01,
         nucleation_start_time = time.time()
         nucleation_rate_info = run_ffs_for_system(
             temp=temp, cov_mult=blocker_mult, tile_conc=tile_conc,
-            var_per_mean2=var_per_mean2, min_nuc_rate=1e-14,
+            var_per_mean2=var_per_mean2, min_nuc_rate=1e-18,
             sys_fun=sys_fun
         )
         nucleation_duration = time.time() - nucleation_start_time
@@ -255,6 +261,10 @@ def run_single_simulation(temp, tile_conc, bconc, n_sims=12, var_per_mean2=0.01,
         'nucleation_rate': nucleation_rate_info[0],
         'nucleation_rate_05': nucleation_rate_info[1],
         'nucleation_rate_95': nucleation_rate_info[2],
+        'growth_rate_1bond': theory_growth_rate(temp, blocker_mult, tile_conc, bonds=1),
+        'pa': pa_full_bconc(temp, bconc, tile_conc),
+        'growth_rate_theory': theory_growth_rate(temp, blocker_mult, tile_conc),
+        'nucleation_rate_theory': nuc_rate_rect(temp, blocker_mult, tile_conc),
         # Timing information (not included in CSV, used for progress display)
         '_growth_duration': growth_duration,
         '_nucleation_duration': nucleation_duration,
@@ -302,8 +312,12 @@ Loop ordering:
                        help='System function to use for simulations (default: simple_twelve_helix_system)')
     parser.add_argument('--output_dir', type=str, default='.',
                        help='Output directory (default: current directory)')
+    parser.add_argument('--output_name', type=str, default=None,
+                       help='Output filename (without extension). Overrides auto-generated name.')
     parser.add_argument('--n_threads', type=int, default=None,
                        help='Number of parallel threads (default: number of CPU cores)')
+    parser.add_argument('--resume', action='store_true',
+                       help='Resume: skip already-computed parameter combinations from existing CSV')
     
     # Track order of parameter specification
     import sys
@@ -341,7 +355,10 @@ Loop ordering:
         print(f"Blocker multiplier range: {len(bmults)} values from {bmults[0]:.2f} to {bmults[-1]:.2f}")
     
     # Generate output filename and path
-    filename = generate_filename(temps, tile_concs, bconcs, bmults)
+    if args.output_name:
+        filename = f"{args.output_name}.csv"
+    else:
+        filename = generate_filename(temps, tile_concs, bconcs, bmults)
     output_path = Path(args.output_dir) / filename
     json_path = output_path.with_suffix('.json')
     
@@ -376,9 +393,40 @@ Loop ordering:
     
     # Prepare parameter combinations list
     combinations_list = list(combinations_generator)
+
+    fieldnames = [
+        'temperature', 'tile_conc', 'blocker_conc', 'blocker_mult',
+        'growth_rate', 'nucleation_rate', 'nucleation_rate_05', 'nucleation_rate_95',
+        'growth_rate_1bond', 'pa', 'growth_rate_theory', 'nucleation_rate_theory',
+    ]
+
+    # Resume: load existing results and skip already-computed points
+    existing_results = []
+    existing_keys = set()
+    if args.resume and output_path.exists():
+        existing_df = pl.read_csv(output_path)
+        print(f"Resuming: loaded {len(existing_df)} existing results from {output_path}")
+        for row in existing_df.iter_rows(named=True):
+            existing_results.append(row)
+            key = (round(row['temperature'], 6), round(row['tile_conc'], 12), round(row['blocker_conc'], 12))
+            existing_keys.add(key)
+        # Filter out already-computed combinations
+        new_combinations = []
+        for combo in combinations_list:
+            temp = combo['temps']
+            tile_conc = combo['tile_concs']
+            if 'bconcs' in combo:
+                bconc = combo['bconcs']
+            else:
+                bconc = combo['bmults'] * tile_conc
+            key = (round(temp, 6), round(tile_conc, 12), round(bconc, 12))
+            if key not in existing_keys:
+                new_combinations.append(combo)
+        skipped = len(combinations_list) - len(new_combinations)
+        print(f"Skipping {skipped} already-computed points, {len(new_combinations)} remaining")
+        combinations_list = new_combinations
+
     total_sims = len(combinations_list)
-    
-    fieldnames = ['temperature', 'tile_conc', 'blocker_conc', 'blocker_mult', 'growth_rate', 'nucleation_rate', 'nucleation_rate_05', 'nucleation_rate_95']
 
     def run_simulation(combination):
         """Run simulation for a single parameter combination"""
@@ -407,7 +455,11 @@ Loop ordering:
                 'growth_rate': float('nan'),
                 'nucleation_rate': float('nan'),
                 'nucleation_rate_05': float('nan'),
-                'nucleation_rate_95': float('nan')
+                'nucleation_rate_95': float('nan'),
+                'growth_rate_1bond': float('nan'),
+                'pa': float('nan'),
+                'growth_rate_theory': float('nan'),
+                'nucleation_rate_theory': float('nan'),
             }
 
     # Run parallel simulations, collecting results in parameter order
@@ -440,17 +492,24 @@ Loop ordering:
                 finally:
                     pbar.update(1)
 
-    # Write CSV in parameter order
+    # Merge existing + new results and write CSV sorted by parameter order
+    all_results = list(existing_results)
+    for result in results:
+        if result is not None:
+            csv_result = {k: v for k, v in result.items() if not k.startswith('_')}
+            all_results.append(csv_result)
+
+    # Sort by temperature, tile_conc, blocker_conc
+    all_results.sort(key=lambda r: (r['temperature'], r['tile_conc'], r['blocker_conc']))
+
     with open(output_path, 'w', newline='') as csvfile:
-        writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+        writer = csv.DictWriter(csvfile, fieldnames=fieldnames, extrasaction='ignore')
         writer.writeheader()
-        for result in results:
-            if result is not None:
-                csv_result = {k: v for k, v in result.items() if not k.startswith('_')}
-                writer.writerow(csv_result)
-    
+        for result in all_results:
+            writer.writerow(result)
+
     print(f"\nSimulations completed! Results saved to: {output_path}")
-    
+
     # Verify the output file
     df = pl.read_csv(output_path)
     print(f"Final dataset shape: {df.shape}")

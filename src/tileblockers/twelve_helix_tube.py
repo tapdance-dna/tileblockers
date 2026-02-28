@@ -9,7 +9,11 @@ if TYPE_CHECKING:
 from .theoretical_calculations import growth_rate
 
 
+from importlib.resources import files as _pkg_files
+
 from .constants import DS_LAT, R_CONST, TILE_CONC, SINGLE_SEQ, COLORSET
+
+_DATA_DIR = _pkg_files(__package__)
 
 # "k=10" sticky end sequences, in NESW order, from Rogers et al.
 TILE_GLUE_SEQUENCES_K10 = [
@@ -244,7 +248,7 @@ def k9_system(
 
     if kblockparams is None:
         kblockparams = {}
-    T9_ALL_SEQS = pl.read_csv("experimental-data/sequences-9-no-nonrep.csv")
+    T9_ALL_SEQS = pl.read_csv(_DATA_DIR / "sequences-9-no-nonrep.csv")
 
     tsd = T9_ALL_SEQS.with_columns(pl.col("Sequence").str.split(" ").alias("Sequence")).with_columns(
         pl.col("Sequence").list.get(2).alias("N"),
@@ -298,7 +302,7 @@ def k10_system(
 
     if kblockparams is None:
         kblockparams = {}
-    T9_ALL_SEQS = pl.read_csv("experimental-data/seqs-10.csv")
+    T9_ALL_SEQS = pl.read_csv(_DATA_DIR / "seqs-10.csv")
 
     tsd = T9_ALL_SEQS.with_columns(pl.col("Sequence").str.split(" ").alias("Sequence")).with_columns(
         pl.col("Sequence").list.get(2).alias("N"),
