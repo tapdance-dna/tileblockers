@@ -16,15 +16,17 @@ from .theoretical_calculations import (
     nuc_rate_rect,
 )
 
-def draw_arrows(ax, coords, **arrowprops):
+def draw_arrows(ax, coords, zorder=7, **arrowprops):
+    merged = dict(arrowstyle="->", color="black", lw=1, shrinkA=0, shrinkB=0) | arrowprops
     for (start, end) in zip(coords, coords[1:]):
         ax.annotate(
             "",
             xy=end,
             xytext=start,
-            arrowprops=dict(arrowstyle="->", color="black", lw=1, shrinkA=0, shrinkB=0) | arrowprops,
+            arrowprops=merged,
+            zorder=zorder,
         )
-    ax.plot(*coords[0], "o", color="black", markersize=3)
+    ax.plot(*coords[0], "o", color=merged["color"], markersize=3, zorder=zorder)
 
 
 def theory_calcs(df, adj_bdg37: float = 0.0, adj_bds: float = 0.0):
@@ -104,7 +106,6 @@ def draw_phase_diagram(
     include_growth_rates: bool | list[float] = True,
     include_growth1_rates: bool | list[float] = True,
     include_nucleation: bool | list[float] = True,
-    nuc_scale: float = 1.0,
     agg="mean"
 ):
     if filt is not None:
@@ -162,14 +163,14 @@ def draw_phase_diagram(
 
     if include_melting:
         growth_contour_levels.append(-np.inf)
-        growth_contour_levels += [-100, -10**1.5, -10, -10**0.5, -1, 0]
+        growth_contour_levels += [-100, -10**1.5, -10, -10**0.5, -1] # , 0
         growth_contour_colors += [
             "#e04c3c",  # most intense red
             "#f06d5c",
             "#f28e7c",
             "#f4af9c",
             "#f6d0bc",
-            "#9d9494"   # least intense, grayish
+            # "#9d9494"   # least intense, grayish
         ]
 
     growth_available_colors=[
@@ -197,10 +198,11 @@ def draw_phase_diagram(
                 growthrates_h,
                 colors=growth_contour_colors,
                 levels=growth_contour_levels,
+                zorder=1,
             )
             # Thin contour lines to visually distinguish fills
             finite_growth_levels = [l for l in growth_contour_levels if np.isfinite(l)]
-            ax.contour(xg, yg, growthrates_h, levels=finite_growth_levels, colors='black', linewidths=0.2, linestyles='solid')
+            ax.contour(xg, yg, growthrates_h, levels=finite_growth_levels, colors='black', linewidths=0.2, linestyles='solid', zorder=2)
         case "heatmap":
             from matplotlib.colors import LinearSegmentedColormap, BoundaryNorm
 
@@ -226,27 +228,27 @@ def draw_phase_diagram(
         
 
         avail_nuc_colors = [
-            "#ede7f680",  # lightest, most transparent
-            "#b39ddbcc",
-            "#7e57c2e6",
-            "#5e35b1f0",
-            "#4527a0fa",
-            "#311b92ff"  # most saturated, fully opaque
+            # "#ede7f680",  # lightest, most transparent
+            "#b39ddbff", #cc",
+            "#7e57c2ff", #e6",
+            "#5e35b1ff", #f0",
+            "#4527a0ff", #fa",
+            "#311b92ff", #ff"  # most saturated, fully opaque
         ]
         avail_nuc_iter = iter(avail_nuc_colors)
         spont_nuc_contour_levels = []
         spont_nuc_contour_colors = []
         if isinstance(include_nucleation, bool):
-            include_nucleation = [1e-8 * nuc_scale, 1e-7 * nuc_scale, 1e-6 * nuc_scale, 1e-5 * nuc_scale, 1e-4 * nuc_scale, np.inf]
+            include_nucleation = [1e-12, 1e-9, 1e-6, 1e-3, np.inf]
         for rate in include_nucleation:
             spont_nuc_contour_levels.append(rate)
             spont_nuc_contour_colors.append(next(avail_nuc_iter))
         match nuc_type:
             case "contour":
-                ax.contourf(xg, yg, spont_nuc, colors=spont_nuc_contour_colors, levels=spont_nuc_contour_levels)
+                ax.contourf(xg, yg, spont_nuc, colors=spont_nuc_contour_colors, levels=spont_nuc_contour_levels, zorder=3)
                 # Thin contour lines to visually distinguish fills
                 finite_nuc_levels = [l for l in spont_nuc_contour_levels if np.isfinite(l)]
-                ax.contour(xg, yg, spont_nuc, levels=finite_nuc_levels, colors='black', linewidths=0.2, linestyles='solid')
+                ax.contour(xg, yg, spont_nuc, levels=finite_nuc_levels, colors='black', linewidths=0.2, linestyles='solid', zorder=4)
             case "heatmap":
                 from matplotlib.colors import LinearSegmentedColormap
 
@@ -281,10 +283,10 @@ def draw_phase_diagram(
             for rate in include_growth1_rates:
                 growth1_contour_levels.append(rate)
                 growth1_contour_colors.append(next(avail1_iter))
-            ax.contourf(xg, yg, gv1, colors=growth1_contour_colors, levels=growth1_contour_levels)
+            ax.contourf(xg, yg, gv1, colors=growth1_contour_colors, levels=growth1_contour_levels, zorder=5)
             # Thin contour lines to visually distinguish fills
             finite_growth1_levels = [l for l in growth1_contour_levels if np.isfinite(l)]
-            ax.contour(xg, yg, gv1, levels=finite_growth1_levels, colors='black', linewidths=0.2, linestyles='solid')
+            ax.contour(xg, yg, gv1, levels=finite_growth1_levels, colors='black', linewidths=0.2, linestyles='solid', zorder=6)
 
     labeldict = {
         "temperature": "Temperature (°C)",
