@@ -1,17 +1,21 @@
 import numpy as np
 from .constants import R_CONST, TILE_CONC, SINGLE_SEQ, DS_LAT, K_F
 
-def calc_gval(seq=None, temp=37, dg=None, dg37=None, ds=None, adj_bdg37=0.0, adj_bds=0.0):
+def calc_gval(glue_energy=SINGLE_SEQ, temp=37, dg=None, adj_bdg37=0.0, adj_bds=0.0):
     if dg is not None:
         return dg
-    elif seq is not None:
-        from rgrow.rgrow import string_dna_dg_ds
-        gsval37 = string_dna_dg_ds(seq)
-        return gsval37[0] - (temp - 37) * (gsval37[1] + adj_bds) + adj_bdg37
-    elif dg37 is not None and ds is not None:
+    if isinstance(glue_energy, tuple):
+        dg37, ds = glue_energy
         return dg37 - (temp - 37) * (ds + adj_bds) + adj_bdg37
-    else:
-        raise ValueError("Either seq, dg, or both dg37 and ds must be provided")
+    from rgrow.rgrow import string_dna_dg_ds
+    if isinstance(glue_energy, list):
+        vals = [string_dna_dg_ds(seq) for seq in glue_energy]
+        dg37 = float(np.mean([v[0] for v in vals]))
+        ds   = float(np.mean([v[1] for v in vals]))
+        return dg37 - (temp - 37) * (ds + adj_bds) + adj_bdg37
+    # str: single sequence
+    gsval37 = string_dna_dg_ds(glue_energy)
+    return gsval37[0] - (temp - 37) * (gsval37[1] + adj_bds) + adj_bdg37
 
 def thermo_beta(temp):
     "Calculates thermodynamic beta in 1/kcal/mol from temperature in Celsius."
@@ -21,32 +25,32 @@ def rt_val(temp):
     "Calculates RT in kcal/mol from temperature in Celsius."
     return R_CONST * (temp + 273.15)
 
-def pa_approx(temp, cov_mult, tile_conc = TILE_CONC, gseq = SINGLE_SEQ, dg=None):
+def pa_approx(temp, cov_mult, tile_conc = TILE_CONC, glue_energy = SINGLE_SEQ, dg=None):
     beta = thermo_beta(temp)
-    gval = calc_gval(seq=gseq, temp=temp, dg=dg)
+    gval = calc_gval(glue_energy=glue_energy, temp=temp, dg=dg)
     return 1 / (1 + cov_mult * tile_conc * np.exp(-beta * gval))
 
-def pa_full(temp, cov_mult, tile_conc = TILE_CONC, gseq = SINGLE_SEQ, dg=None, adj_bdg=0.0, adj_bds=0.0):
+def pa_full(temp, cov_mult, tile_conc = TILE_CONC, glue_energy = SINGLE_SEQ, dg=None, adj_bdg=0.0, adj_bds=0.0):
     beta = thermo_beta(temp)
-    gval = calc_gval(seq=gseq, temp=temp, dg=dg, adj_bdg37=adj_bdg, adj_bds=adj_bds)
+    gval = calc_gval(glue_energy=glue_energy, temp=temp, dg=dg, adj_bdg37=adj_bdg, adj_bds=adj_bds)
     b_conc = cov_mult * tile_conc
     gb = np.exp(beta * gval)
     return (0.5 * (tile_conc - b_conc - gb + np.sqrt((b_conc - tile_conc + gb)**2 + 4 * tile_conc * gb))) / tile_conc
 
-def pa_full_bconc(temp, blocker_conc, tile_conc = TILE_CONC, gseq = SINGLE_SEQ, dg=None, adj_bdg=0.0, adj_bds=0.0):
+def pa_full_bconc(temp, blocker_conc, tile_conc = TILE_CONC, glue_energy = SINGLE_SEQ, dg=None, adj_bdg=0.0, adj_bds=0.0):
     beta = thermo_beta(temp)
-    gval = calc_gval(seq=gseq, temp=temp, dg=dg, adj_bdg37=adj_bdg, adj_bds=adj_bds)
+    gval = calc_gval(glue_energy=glue_energy, temp=temp, dg=dg, adj_bdg37=adj_bdg, adj_bds=adj_bds)
     gb = np.exp(beta * gval)
     return (0.5 * (tile_conc - blocker_conc - gb + np.sqrt((blocker_conc - tile_conc + gb)**2 + 4 * tile_conc * gb))) / tile_conc
 
-def growth_rate(temp, cov_mult, tile_conc=TILE_CONC, gseq=SINGLE_SEQ, gamma=1, kf=1e6, dslat=DS_LAT, order=2, dg=None, tbdg=None, bonds=2, adj_bdg=0.0, adj_bds=0.0):
+def growth_rate(temp, cov_mult, tile_conc=TILE_CONC, glue_energy=SINGLE_SEQ, gamma=1, kf=1e6, dslat=DS_LAT, order=2, dg=None, tbdg=None, bonds=2, adj_bdg=0.0, adj_bds=0.0):
     """Two-bond growth rate, per second"""
     beta = thermo_beta(temp)
-    gval = calc_gval(seq=gseq, temp=temp, dg=dg)
-    
+    gval = calc_gval(glue_energy=glue_energy, temp=temp, dg=dg)
+
     # Calculate probability of correct binding
-    pa = pa_full(temp, cov_mult, tile_conc, gseq, dg=dg, adj_bdg=adj_bdg, adj_bds=adj_bds)
-    
+    pa = pa_full(temp, cov_mult, tile_conc, glue_energy, dg=dg, adj_bdg=adj_bdg, adj_bds=adj_bds)
+
     # Apply order parameter to probability
     rf = kf * tile_conc * pa**order
 
@@ -54,13 +58,13 @@ def growth_rate(temp, cov_mult, tile_conc=TILE_CONC, gseq=SINGLE_SEQ, gamma=1, k
         rr2 = kf * np.exp(beta * tbdg)
     else:
         rr2 = kf * np.exp(bonds * beta * gval - (bonds-1)*dslat/R_CONST)
-    
+
     return gamma * (rf - rr2)
 
-def assembly_energy(n_tiles, n_bonds, temp, cov_mult, tile_conc=TILE_CONC, gseq=SINGLE_SEQ, dg=None, pba=False, dslat=DS_LAT, adj_bdg=0.0, adj_bds=0.0):
+def assembly_energy(n_tiles, n_bonds, temp, cov_mult, tile_conc=TILE_CONC, glue_energy=SINGLE_SEQ, dg=None, pba=False, dslat=DS_LAT, adj_bdg=0.0, adj_bds=0.0):
     rt = rt_val(temp)
-    gval = calc_gval(seq=gseq, temp=temp, dg=dg)
-    pa = pa_full(temp, cov_mult, tile_conc, gseq, dg=dg, adj_bdg=adj_bdg, adj_bds=adj_bds)
+    gval = calc_gval(glue_energy=glue_energy, temp=temp, dg=dg)
+    pa = pa_full(temp, cov_mult, tile_conc, glue_energy, dg=dg, adj_bdg=adj_bdg, adj_bds=adj_bds)
     dglat = -(temp + 273.15) * dslat
 
     if pba:
@@ -72,54 +76,54 @@ def assembly_energy(n_tiles, n_bonds, temp, cov_mult, tile_conc=TILE_CONC, gseq=
 
     return bond_energy + tile_chempot
 
-def square_energy(size, temp, cov_mult, tile_conc=TILE_CONC, gseq=SINGLE_SEQ, dg=None, pba=False, dslat=DS_LAT, adj_bdg=0.0, adj_bds=0.0):
+def square_energy(size, temp, cov_mult, tile_conc=TILE_CONC, glue_energy=SINGLE_SEQ, dg=None, pba=False, dslat=DS_LAT, adj_bdg=0.0, adj_bds=0.0):
     n_bonds = 2 * size * (size - 1)
     n_tiles = size * size
-    return assembly_energy(n_tiles, n_bonds, temp, cov_mult, tile_conc, gseq, dg, pba, dslat, adj_bdg, adj_bds)
+    return assembly_energy(n_tiles, n_bonds, temp, cov_mult, tile_conc, glue_energy, dg, pba, dslat, adj_bdg, adj_bds)
 
-def rectangle_energy(width, height, temp, cov_mult, tile_conc=TILE_CONC, gseq=SINGLE_SEQ, dg=None, pba=False, dslat=DS_LAT, tube: None | int = None, adj_bdg=0.0, adj_bds=0.0):
+def rectangle_energy(width, height, temp, cov_mult, tile_conc=TILE_CONC, glue_energy=SINGLE_SEQ, dg=None, pba=False, dslat=DS_LAT, tube: None | int = None, adj_bdg=0.0, adj_bds=0.0):
     if tube is not None:
         height = np.minimum(height, tube)
     n_bonds = width * (height - 1) + (width - 1) * height
     if tube is not None:
         n_bonds += width * (height >= tube)
     n_tiles = width * height
-    return assembly_energy(n_tiles, n_bonds, temp, cov_mult, tile_conc, gseq, dg, pba, dslat, adj_bdg, adj_bds)
+    return assembly_energy(n_tiles, n_bonds, temp, cov_mult, tile_conc, glue_energy, dg, pba, dslat, adj_bdg, adj_bds)
 
-def nuc_rate_rect_mult(temp, mults, pba=False, adj_bdg=0.0, adj_bds=0.0):
-    rect_sizes = [(1,1), (1,2), (2,2), (2,3), (3,3), (3,4), (4,4), (4,5), (5,5), (5,6), (6,6), (6,7), 
-                (7,7), (7,8), (8,8), (8,9), (9,9), (9,10), 
+def nuc_rate_rect_mult(temp, mults, glue_energy=SINGLE_SEQ, pba=False, adj_bdg=0.0, adj_bds=0.0):
+    rect_sizes = [(1,1), (1,2), (2,2), (2,3), (3,3), (3,4), (4,4), (4,5), (5,5), (5,6), (6,6), (6,7),
+                (7,7), (7,8), (8,8), (8,9), (9,9), (9,10),
                 (10,10), (10,11), (11,11), (11,12), (12,12), (12,13)]
     rect_sizes = np.array(rect_sizes)
     mults = mults[:,None]
     rect_ntiles = rect_sizes[:,0] * rect_sizes[:,1]
 
-    cngr = rectangle_energy(rect_sizes[:,0], rect_sizes[:,1], temp, mults, pba=pba, adj_bdg=adj_bdg, adj_bds=adj_bds).max(axis=1)
-    cnsr = rectangle_energy(rect_sizes[:,0], rect_sizes[:,1], temp, mults, pba=pba, adj_bdg=adj_bdg, adj_bds=adj_bds).argmax(axis=1)
-    cpr = np.exp(-cngr) * pa_full(temp, mults[:,0], adj_bdg=adj_bdg, adj_bds=adj_bds)**2 * K_F * TILE_CONC
+    cngr = rectangle_energy(rect_sizes[:,0], rect_sizes[:,1], temp, mults, glue_energy=glue_energy, pba=pba, adj_bdg=adj_bdg, adj_bds=adj_bds).max(axis=1)
+    cnsr = rectangle_energy(rect_sizes[:,0], rect_sizes[:,1], temp, mults, glue_energy=glue_energy, pba=pba, adj_bdg=adj_bdg, adj_bds=adj_bds).argmax(axis=1)
+    cpr = np.exp(-cngr) * pa_full(temp, mults[:,0], glue_energy=glue_energy, adj_bdg=adj_bdg, adj_bds=adj_bds)**2 * K_F * TILE_CONC
     return cpr
 
-def nuc_rate_rect_temps(temps, mult, tile_conc=TILE_CONC, pba=False, adj_bdg=0.0, adj_bds=0.0):
-    rect_sizes = [(1,1), (1,2), (2,2), (2,3), (3,3), (3,4), (4,4), (4,5), (5,5), (5,6), (6,6), (6,7), 
-                (7,7), (7,8), (8,8), (8,9), (9,9), (9,10), 
+def nuc_rate_rect_temps(temps, mult, tile_conc=TILE_CONC, glue_energy=SINGLE_SEQ, pba=False, adj_bdg=0.0, adj_bds=0.0):
+    rect_sizes = [(1,1), (1,2), (2,2), (2,3), (3,3), (3,4), (4,4), (4,5), (5,5), (5,6), (6,6), (6,7),
+                (7,7), (7,8), (8,8), (8,9), (9,9), (9,10),
                 (10,10), (10,11), (11,11), (11,12), (12,12), (12,13)]
     temps = temps[:,None]
     rect_sizes = np.array(rect_sizes)
     rect_ntiles = rect_sizes[:,0] * rect_sizes[:,1]
 
-    cngrt = rectangle_energy(rect_sizes[:,0], rect_sizes[:,1], temps, mult, tile_conc, pba=pba, adj_bdg=adj_bdg, adj_bds=adj_bds).max(axis=1)
-    cnsrt = rectangle_energy(rect_sizes[:,0], rect_sizes[:,1], temps, mult, tile_conc, pba=pba, adj_bdg=adj_bdg, adj_bds=adj_bds).argmax(axis=1)
-    cprt = np.exp(-cngrt) * K_F * tile_conc * pa_full(temps[:,0], mult, adj_bdg=adj_bdg, adj_bds=adj_bds)**2
+    cngrt = rectangle_energy(rect_sizes[:,0], rect_sizes[:,1], temps, mult, tile_conc, glue_energy=glue_energy, pba=pba, adj_bdg=adj_bdg, adj_bds=adj_bds).max(axis=1)
+    cnsrt = rectangle_energy(rect_sizes[:,0], rect_sizes[:,1], temps, mult, tile_conc, glue_energy=glue_energy, pba=pba, adj_bdg=adj_bdg, adj_bds=adj_bds).argmax(axis=1)
+    cprt = np.exp(-cngrt) * K_F * tile_conc * pa_full(temps[:,0], mult, glue_energy=glue_energy, adj_bdg=adj_bdg, adj_bds=adj_bds)**2
     return cprt
 
-def nuc_rate_rect(temp, mult, tile_conc=TILE_CONC, pba=False, adj_bdg=0.0, adj_bds=0.0):
-    rect_sizes = [(1,1), (1,2), (2,2), (2,3), (3,3), (3,4), (4,4), (4,5), (5,5), (5,6), (6,6), (6,7), 
-                (7,7), (7,8), (8,8), (8,9), (9,9), (9,10), 
+def nuc_rate_rect(temp, mult, tile_conc=TILE_CONC, glue_energy=SINGLE_SEQ, pba=False, adj_bdg=0.0, adj_bds=0.0):
+    rect_sizes = [(1,1), (1,2), (2,2), (2,3), (3,3), (3,4), (4,4), (4,5), (5,5), (5,6), (6,6), (6,7),
+                (7,7), (7,8), (8,8), (8,9), (9,9), (9,10),
                 (10,10), (10,11), (11,11), (11,12), (12,12), (12,13)]
     rect_sizes = np.array(rect_sizes)
     rect_ntiles = rect_sizes[:,0] * rect_sizes[:,1]
 
-    cngrt = rectangle_energy(rect_sizes[:,0], rect_sizes[:,1], temp, mult, tile_conc, pba=pba, adj_bdg=adj_bdg, adj_bds=adj_bds).max()
-    cnsrt = rectangle_energy(rect_sizes[:,0], rect_sizes[:,1], temp, mult, tile_conc, pba=pba, adj_bdg=adj_bdg, adj_bds=adj_bds).argmax()
-    cprt = np.exp(-cngrt) * K_F * tile_conc * pa_full(temp, mult, adj_bdg=adj_bdg, adj_bds=adj_bds)**2
+    cngrt = rectangle_energy(rect_sizes[:,0], rect_sizes[:,1], temp, mult, tile_conc, glue_energy=glue_energy, pba=pba, adj_bdg=adj_bdg, adj_bds=adj_bds).max()
+    cnsrt = rectangle_energy(rect_sizes[:,0], rect_sizes[:,1], temp, mult, tile_conc, glue_energy=glue_energy, pba=pba, adj_bdg=adj_bdg, adj_bds=adj_bds).argmax()
+    cprt = np.exp(-cngrt) * K_F * tile_conc * pa_full(temp, mult, glue_energy=glue_energy, adj_bdg=adj_bdg, adj_bds=adj_bds)**2
     return cprt

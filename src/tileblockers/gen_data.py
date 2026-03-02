@@ -18,9 +18,12 @@ from tileblockers.twelve_helix_tube import (
     simple_twelve_helix_system,
     twelve_helix_system,
     k9_system,
-    k10_system
+    k10_system,
+    K10_GLUE_SEQUENCES,
+    k9_glue_sequences,
+    k10_glue_sequences,
 )
-from tileblockers.constants import TILE_CONC
+from tileblockers.constants import TILE_CONC, SINGLE_SEQ
 from tileblockers.theoretical_calculations import (
     growth_rate as theory_growth_rate,
     pa_full_bconc,
@@ -210,7 +213,17 @@ def rate_per_hour_sim_with_melting_single_threaded(
     return ((ntiles_after - ntiles) / (times_after - times)).mean() * 3600
 
 
-def run_single_simulation(temp, tile_conc, bconc, n_sims=24, var_per_mean2=0.001, 
+def _glue_energy_for_system(sys_fun_name):
+    """Map system function name to the appropriate glue_energy for theoretical calculations."""
+    return {
+        'simple_twelve_helix_system': SINGLE_SEQ,
+        'twelve_helix_system': K10_GLUE_SEQUENCES,
+        'k9_system': k9_glue_sequences(),
+        'k10_system': k10_glue_sequences(),
+    }.get(sys_fun_name, SINGLE_SEQ)
+
+
+def run_single_simulation(temp, tile_conc, bconc, n_sims=24, var_per_mean2=0.001,
                          max_sim_time=36000, start_size=1536, length=256, sys_fun_name='simple_twelve_helix_system'):
     """Run both growth and nucleation simulation for a single parameter set"""
     import time
@@ -225,19 +238,20 @@ def run_single_simulation(temp, tile_conc, bconc, n_sims=24, var_per_mean2=0.001
         'k10_system': k10_system
     }
     sys_fun = sys_fun_map[sys_fun_name]
-    
+    glue_energy = _glue_energy_for_system(sys_fun_name)
+
     # Growth rate simulation with timing (using single-threaded version)
     growth_start_time = time.time()
     growth_rate = rate_per_hour_sim_with_melting_single_threaded(
-        temp, blocker_mult, n_sims=n_sims, 
+        temp, blocker_mult, n_sims=n_sims,
         length=length,
-        sys_fun=sys_fun, 
+        sys_fun=sys_fun,
         tile_conc=tile_conc, tile_remaining=1.0,
         start_size=start_size,
         max_sim_time=max_sim_time
     ) / 3600.0 / 3.5
     growth_duration = time.time() - growth_start_time
-    
+
     # Skip nucleation simulation if growth rate is negative (real nucleation rate would be zero)
     if growth_rate < 0:
         nucleation_rate_info = (0.0, 0.0, 0.0)  # (nucleation_rate, nucleation_rate_05, nucleation_rate_95)
@@ -251,7 +265,7 @@ def run_single_simulation(temp, tile_conc, bconc, n_sims=24, var_per_mean2=0.001
             sys_fun=sys_fun
         )
         nucleation_duration = time.time() - nucleation_start_time
-    
+
     return {
         'temperature': temp,
         'tile_conc': tile_conc,
@@ -261,10 +275,10 @@ def run_single_simulation(temp, tile_conc, bconc, n_sims=24, var_per_mean2=0.001
         'nucleation_rate': nucleation_rate_info[0],
         'nucleation_rate_05': nucleation_rate_info[1],
         'nucleation_rate_95': nucleation_rate_info[2],
-        'growth_rate_1bond': theory_growth_rate(temp, blocker_mult, tile_conc, bonds=1),
-        'pa': pa_full_bconc(temp, bconc, tile_conc),
-        'growth_rate_theory': theory_growth_rate(temp, blocker_mult, tile_conc),
-        'nucleation_rate_theory': nuc_rate_rect(temp, blocker_mult, tile_conc),
+        'growth_rate_1bond': theory_growth_rate(temp, blocker_mult, tile_conc, glue_energy=glue_energy, bonds=1),
+        'pa': pa_full_bconc(temp, bconc, tile_conc, glue_energy=glue_energy),
+        'growth_rate_theory': theory_growth_rate(temp, blocker_mult, tile_conc, glue_energy=glue_energy),
+        'nucleation_rate_theory': nuc_rate_rect(temp, blocker_mult, tile_conc, glue_energy=glue_energy),
         # Timing information (not included in CSV, used for progress display)
         '_growth_duration': growth_duration,
         '_nucleation_duration': nucleation_duration,

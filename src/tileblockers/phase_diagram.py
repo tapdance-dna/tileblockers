@@ -5,6 +5,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.ticker import FuncFormatter
 
+from .constants import SINGLE_SEQ
 from .theoretical_calculations import (
     pa_full,
     pa_full_bconc,
@@ -29,12 +30,12 @@ def draw_arrows(ax, coords, zorder=7, **arrowprops):
     ax.plot(*coords[0], "o", color=merged["color"], markersize=3, zorder=zorder)
 
 
-def theory_calcs(df, adj_bdg37: float = 0.0, adj_bds: float = 0.0):
+def theory_calcs(df, adj_bdg37: float = 0.0, adj_bds: float = 0.0, glue_energy=SINGLE_SEQ):
     return df.with_columns(
         pl.struct("temperature", "tile_conc", "blocker_conc")
         .map_elements(
             lambda x: growth_rate(
-                x["temperature"], x["blocker_conc"] / x["tile_conc"], x["tile_conc"], adj_bdg=adj_bdg37, adj_bds=adj_bds
+                x["temperature"], x["blocker_conc"] / x["tile_conc"], x["tile_conc"], glue_energy=glue_energy, adj_bdg=adj_bdg37, adj_bds=adj_bds
             ),
             return_dtype=pl.Float64,
         )
@@ -42,7 +43,7 @@ def theory_calcs(df, adj_bdg37: float = 0.0, adj_bds: float = 0.0):
         pl.struct("temperature", "tile_conc", "blocker_conc")
         .map_elements(
             lambda x: nuc_rate_rect(
-                x["temperature"], x["blocker_conc"] / x["tile_conc"], x["tile_conc"], adj_bdg=adj_bdg37, adj_bds=adj_bds
+                x["temperature"], x["blocker_conc"] / x["tile_conc"], x["tile_conc"], glue_energy=glue_energy, adj_bdg=adj_bdg37, adj_bds=adj_bds
             ),
             return_dtype=pl.Float64,
         )
@@ -53,6 +54,7 @@ def theory_calcs(df, adj_bdg37: float = 0.0, adj_bds: float = 0.0):
                 x["temperature"],
                 x["blocker_conc"] / x["tile_conc"],
                 x["tile_conc"],
+                glue_energy=glue_energy,
                 bonds=1,
                 adj_bdg=adj_bdg37,
                 adj_bds=adj_bds,
@@ -66,6 +68,7 @@ def theory_calcs(df, adj_bdg37: float = 0.0, adj_bds: float = 0.0):
                 x["temperature"],
                 x["blocker_conc"],
                 x["tile_conc"],
+                glue_energy=glue_energy,
                 adj_bdg=adj_bdg37,
                 adj_bds=adj_bds,
             ),

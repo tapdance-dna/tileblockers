@@ -31,6 +31,36 @@ TILE_GLUE_SEQUENCES_K10 = [
     ["ACTCTCTGTG", "CGTATTGTCC", "AGTCTGTTCC", "GAGAAGAACC"],
 ]
 
+# N and E glue sequences from Rogers et al. K10 design (TILE_GLUE_SEQUENCES_K10)
+K10_GLUE_SEQUENCES = (
+    [TILE_GLUE_SEQUENCES_K10[i][0] for i in range(12)] +  # North
+    [TILE_GLUE_SEQUENCES_K10[i][1] for i in range(12)]    # East
+)
+
+
+def k9_glue_sequences():
+    """Return list of glue sequences from the K9 system CSV (S + E glues)."""
+    seqs = pl.read_csv(_DATA_DIR / "sequences-9-no-nonrep.csv")
+    tsd = seqs.with_columns(
+        pl.col("Sequence").str.split(" ").alias("Sequence")
+    ).with_columns(
+        pl.col("Sequence").list.get(0).alias("E"),
+        pl.col("Sequence").list.get(5).alias("S"),
+    )
+    return tsd["S"].to_list() + tsd["E"].to_list()
+
+
+def k10_glue_sequences():
+    """Return list of glue sequences from the CSV-based K10 system (S + E glues)."""
+    seqs = pl.read_csv(_DATA_DIR / "seqs-10.csv")
+    tsd = seqs.with_columns(
+        pl.col("Sequence").str.split(" ").alias("Sequence")
+    ).with_columns(
+        pl.col("Sequence").list.get(0).alias("E"),
+        pl.col("Sequence").list.get(5).alias("S"),
+    )
+    return tsd["S"].to_list() + tsd["E"].to_list()
+
 
 # tns = range(1, len(sys.tile_names))
 # dvs = []
